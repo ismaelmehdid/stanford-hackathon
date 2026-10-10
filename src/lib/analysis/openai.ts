@@ -80,7 +80,7 @@ let client: OpenAI | undefined;
 const openai = () =>
   (client ??= new OpenAI({ apiKey: requireEnv("OPENAI_API_KEY") }));
 
-async function parseStructured<Schema extends z.ZodType>(
+export async function parseStructured<Schema extends z.ZodType>(
   schema: Schema,
   name: string,
   instructions: string,

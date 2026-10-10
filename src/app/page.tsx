@@ -9,9 +9,14 @@ export default function Home() {
       <p className="max-w-md text-lg text-zinc-600 dark:text-zinc-400">
         Edit <code className="font-mono">src/app/page.tsx</code> to get started.
       </p>
-      <Link href="/analyze" className="font-medium underline">
-        Influencer video analysis
-      </Link>
+      <div className="flex gap-6">
+        <Link href="/analyze" className="font-medium underline">
+          Influencer video analysis
+        </Link>
+        <Link href="/generate" className="font-medium underline">
+          Video generation
+        </Link>
+      </div>
     </main>
   );
 }
