@@ -94,8 +94,8 @@ export function StartRunForm() {
           {submitting ? "Starting…" : "Start analysis →"}
         </button>
         <p className="text-center font-mono text-[11px] text-muted">
-          Apify up to ${estimateApifyCostUsd(settings).toFixed(2)} + OpenAI
-          usage · 5–15 minutes
+          Up to ${estimateApifyCostUsd(settings).toFixed(2)} in data costs ·
+          5–15 minutes
         </p>
       </div>
       {error && (

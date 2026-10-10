@@ -24,11 +24,8 @@ export default function GeneratePage() {
               Turn what works into <em>new</em> videos.
             </h1>
             <p className="max-w-lg text-lg text-muted">
-              Pick an analysis and the replication briefs to use. We write one
-              script per hairstyle that keeps the winning format and emotional
-              triggers, render several takes of each as a 3-frame storyboard
-              that shows how the finished video would look, and you pick the
-              best take.
+              Pick an analysis and its briefs. Get a script per hairstyle and
+              storyboard takes of each, then pick the best one.
             </p>
           </div>
           <StartGenerationForm />

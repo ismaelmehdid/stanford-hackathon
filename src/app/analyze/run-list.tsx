@@ -26,7 +26,7 @@ export function RunList() {
     <div className="flex flex-col gap-8">
       <SectionHeader
         title="Reports"
-        description="Every run is cached, so re-running a brand reuses finished scrapes and AI calls."
+        description="Re-running a brand is fast."
       />
       {runs === null ? (
         <div className="flex flex-col gap-2">

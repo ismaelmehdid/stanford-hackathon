@@ -20,9 +20,8 @@ export default function AnalyzePage() {
               Which influencer videos <em>actually</em> work?
             </h1>
             <p className="max-w-lg text-lg text-muted">
-              Paste a hair care brand&apos;s Instagram page. We find its
-              influencer videos, compare each one with the brand&apos;s and the
-              creator&apos;s usual videos, and explain what works.
+              Paste a brand&apos;s Instagram page. See which creator videos beat
+              the brand&apos;s usual post and the creator&apos;s, and why.
             </p>
           </div>
           <StartRunForm />

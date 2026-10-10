@@ -1,4 +1,6 @@
-# Stanford Hackathon
+# GrowthOS
+
+GitHub for Marketing: version-control, automate, and continuously improve every campaign. Every team's work is saved as an update, work in progress goes through approval before it goes live, and every launch becomes a version. Influencer video analysis and storyboard video generation run as GrowthOS Automations that check and feed every version.
 
 Next.js 16 (App Router) + React 19 + TypeScript + Tailwind CSS 4, managed with pnpm.
 
@@ -38,9 +40,15 @@ Open http://localhost:3000.
 ```
 src/
   app/          # Routes, layouts, and route handlers (App Router)
+    analyze/    # Part 1: influencer video analysis
+    generate/   # Part 2: storyboard video generation
+    campaigns/  # Campaigns shown like GitHub repositories
   components/   # Shared UI components
     three/      # three.js scenes (hero hair strands, report performance chart)
-  lib/          # Shared utilities, clients, and helpers (create as needed)
+  lib/          # Shared utilities, clients, and helpers
+    analysis/   # Scraping, scoring and AI analysis
+    generation/ # Scripts and storyboard rendering
+    campaigns/  # Campaign types, sample data and queries
 ```
 
 The UI is black and white only: tiers are told apart by fill (Amplify solid, Observe hatched, Stop outlined), not color. Colors live as tokens in `src/app/globals.css`, which also flips reports to black on white when printed. The three.js scenes load after the page, pause when off screen, and respect reduced motion.
@@ -85,3 +93,31 @@ Each influencer video is compared with the median of the brand page's and the cr
 Output for Part 2: `.data/runs/<runId>/analysis.json`, also downloadable from the run page. Its shape is `BrandAnalysisSchema` in `src/lib/analysis/schema.ts`. `conclusions.replicationBriefs` is the input for script generation.
 
 Everything is cached in `.data/` (git-ignored), so re-running a brand reuses finished scrapes and AI calls. Design: `docs/superpowers/specs/2026-10-10-video-analysis-design.md`.
+
+## Campaigns
+
+Seven teams contribute to each campaign (Brand manager, Ecommerce manager, Public relations manager, Visual design studio, Design adaptation studio, Video production agency and Media buy agency), and every change they make is saved as an update.
+
+- `/campaigns` lists every campaign.
+- `/campaigns/<owner>/<slug>` shows one campaign in tabs:
+  - **Overview**: key numbers, the improvement loop, assets, drafts in progress and teams.
+  - **History**: every update, filterable by team and by live or draft work.
+  - **Approvals**: work sent for approval, with its checks and the other teams' reviews.
+  - **Automations**: GrowthOS Automations and their recent runs.
+  - **Versions**: every launch, with what each team delivered and the numbers at the time.
+  - **Teams**: who fills each role and what they contributed.
+
+The automations reuse the Part 1 analysis (`/analyze`) and Part 2 generation (`/generate`) features: a weekly influencer analysis adds new insights and briefs, a new brief triggers storyboard generation, and the tier from the analysis shows up as the "Influencer benchmark" check on every approval request.
+
+The UI is written for marketing teams, so it never uses version-control words. The code still models a campaign like a repository, and `src/lib/campaigns/types.ts` maps the two vocabularies:
+
+| In the code  | In the UI                                        |
+| ------------ | ------------------------------------------------ |
+| commit       | update                                           |
+| pull request | approval request (In review, Approved, Declined) |
+| branch       | draft (the default branch is the live campaign)  |
+| release      | version                                          |
+| workflow     | automation                                       |
+| forkedFrom   | built on                                         |
+
+The data is sample data in `src/lib/campaigns/data.ts`. Types live in `src/lib/campaigns/types.ts`, team definitions in `src/lib/campaigns/teams.ts`, and helpers in `src/lib/campaigns/queries.ts`.

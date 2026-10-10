@@ -21,9 +21,9 @@ const instrumentSerif = Instrument_Serif({
 });
 
 export const metadata: Metadata = {
-  title: { default: "Stanford Hackathon", template: "%s · Stanford Hackathon" },
+  title: { default: "GrowthOS", template: "%s · GrowthOS" },
   description:
-    "Find a brand's influencer videos, see which ones work, and get briefs to make more of them.",
+    "GitHub for Marketing. Version-control, automate and continuously improve every campaign.",
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {
