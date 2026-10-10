@@ -32,7 +32,7 @@ const sourcesRoute = await import("../generation-sources/route");
 const generationsRoute = await import("./route");
 const generationRoute = await import("./[generationId]/route");
 const pickRoute = await import("./[generationId]/pick/route");
-const videoRoute = await import("./[generationId]/videos/[file]/route");
+const imageRoute = await import("./[generationId]/images/[file]/route");
 
 const ORIGIN = "http://localhost:3000";
 const fakeGeneration = { id: "gen-1", status: "queued" } as GenerationState;
@@ -64,7 +64,7 @@ beforeEach(() => {
 });
 
 describe("GET /api/generation-sources", () => {
-  it("returns the sources", async () => {
+  it("returns the sources and the default image quality", async () => {
     vi.mocked(sources.listSources).mockResolvedValue([
       {
         id: "sample:headandshoulders",
@@ -74,26 +74,26 @@ describe("GET /api/generation-sources", () => {
         briefs: [],
       },
     ]);
-    vi.stubEnv("SORA_MODEL", "");
+    vi.stubEnv("PREVIEW_IMAGE_QUALITY", "");
     const response = await sourcesRoute.GET();
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({
       sources: [expect.objectContaining({ id: "sample:headandshoulders" })],
-      soraPricePerSecondUsd: 0.1,
+      imageQuality: "medium",
     });
     vi.unstubAllEnvs();
   });
 
-  // The browser cannot read SORA_MODEL, so the start form prices takes with this value.
-  it("reports the price of the configured Sora model, or null when unknown", async () => {
+  // The browser cannot read PREVIEW_IMAGE_QUALITY, so the start form prices images with this value.
+  it("reports the configured image quality, or null when it is not supported", async () => {
     vi.mocked(sources.listSources).mockResolvedValue([]);
-    vi.stubEnv("SORA_MODEL", "sora-2-pro");
+    vi.stubEnv("PREVIEW_IMAGE_QUALITY", "high");
     expect(await (await sourcesRoute.GET()).json()).toMatchObject({
-      soraPricePerSecondUsd: 0.3,
+      imageQuality: "high",
     });
-    vi.stubEnv("SORA_MODEL", "sora-9");
+    vi.stubEnv("PREVIEW_IMAGE_QUALITY", "ultra");
     expect(await (await sourcesRoute.GET()).json()).toMatchObject({
-      soraPricePerSecondUsd: null,
+      imageQuality: null,
     });
     vi.unstubAllEnvs();
   });
@@ -184,16 +184,14 @@ describe("POST /api/generations", () => {
 
   it("maps a rejected request (e.g. over the cap) to 400 without starting it", async () => {
     vi.mocked(generations.createGeneration).mockRejectedValue(
-      new Error(
-        "This would render 540 s of video (≈ $54.00). The limit is 120 s.",
-      ),
+      new Error("This would create 90 images (≈ $3.15). The limit is 60."),
     );
     const response = await generationsRoute.POST(
       jsonRequest("/api/generations", { sourceId: "sample:headandshoulders" }),
     );
     expect(response.status).toBe(400);
     expect(await response.json()).toEqual({
-      error: "This would render 540 s of video (≈ $54.00). The limit is 120 s.",
+      error: "This would create 90 images (≈ $3.15). The limit is 60.",
     });
     expect(generations.startGeneration).not.toHaveBeenCalled();
   });
@@ -277,7 +275,7 @@ describe("POST /api/generations/[generationId]/pick", () => {
   });
 });
 
-describe("GET /api/generations/[generationId]/videos/[file]", () => {
+describe("GET /api/generations/[generationId]/images/[file]", () => {
   let dataDir: string;
   const previousDataDir = process.env.ANALYSIS_DATA_DIR;
   const bytes = Buffer.from(Array.from({ length: 100 }, (_, i) => i));
@@ -287,8 +285,16 @@ describe("GET /api/generations/[generationId]/videos/[file]", () => {
     process.env.ANALYSIS_DATA_DIR = dataDir;
     const dir = path.join(dataDir, "generations", "gen-1");
     await mkdir(dir, { recursive: true });
+    await writeFile(path.join(dir, "s1-take1-f1.jpg"), bytes);
     await writeFile(path.join(dir, "s1-take1.mp4"), bytes);
     await writeFile(path.join(dir, "generation.json"), "{}");
+    // A directory with a valid frame name must not be served.
+    await mkdir(path.join(dir, "s1-take1-f3.jpg"));
+    // A frame-named file next to the generation dir must never be reachable from it.
+    await writeFile(
+      path.join(dataDir, "generations", "s1-take1-f2.jpg"),
+      bytes,
+    );
   });
 
   afterAll(async () => {
@@ -297,73 +303,41 @@ describe("GET /api/generations/[generationId]/videos/[file]", () => {
     await rm(dataDir, { recursive: true, force: true });
   });
 
-  const video = (
-    generationId: string,
-    file: string,
-    headers: Record<string, string> = {},
-  ) =>
-    videoRoute.GET(
-      new Request(`${ORIGIN}/api/generations/${generationId}/videos/${file}`, {
-        headers,
-      }),
+  const image = (generationId: string, file: string) =>
+    imageRoute.GET(
+      new Request(`${ORIGIN}/api/generations/${generationId}/images/${file}`),
       params({ generationId, file }),
     );
 
-  it("serves the whole file with range support advertised", async () => {
-    const response = await video("gen-1", "s1-take1.mp4");
+  it("serves a storyboard frame as a privately cached JPEG", async () => {
+    const response = await image("gen-1", "s1-take1-f1.jpg");
     expect(response.status).toBe(200);
-    expect(response.headers.get("content-type")).toBe("video/mp4");
-    expect(response.headers.get("accept-ranges")).toBe("bytes");
+    expect(response.headers.get("content-type")).toBe("image/jpeg");
+    expect(response.headers.get("cache-control")).toBe("private, max-age=3600");
     expect(response.headers.get("content-length")).toBe("100");
     expect(Buffer.from(await response.arrayBuffer())).toEqual(bytes);
   });
 
   it.each([
-    ["bytes=10-19", 10, 19],
-    ["bytes=90-", 90, 99],
-    ["bytes=-5", 95, 99],
-    ["bytes=50-1000", 50, 99],
-    ["bytes=0-0", 0, 0],
-  ])("serves %s as 206 partial content", async (range, start, end) => {
-    const response = await video("gen-1", "s1-take1.mp4", { range });
-    expect(response.status).toBe(206);
-    expect(response.headers.get("content-range")).toBe(
-      `bytes ${start}-${end}/100`,
-    );
-    expect(response.headers.get("content-length")).toBe(
-      String(end - start + 1),
-    );
-    expect(Buffer.from(await response.arrayBuffer())).toEqual(
-      bytes.subarray(start, end + 1),
-    );
-  });
-
-  it.each(["bytes=100-", "bytes=200-300", "bytes=-0", "bytes=20-10"])(
-    "answers the unsatisfiable range %s with 416",
-    async (range) => {
-      const response = await video("gen-1", "s1-take1.mp4", { range });
-      expect(response.status).toBe(416);
-      expect(response.headers.get("content-range")).toBe("bytes */100");
-    },
-  );
-
-  it("ignores a Range header it does not understand", async () => {
-    const response = await video("gen-1", "s1-take1.mp4", {
-      range: "items=0-5",
-    });
-    expect(response.status).toBe(200);
-    expect(response.headers.get("content-length")).toBe("100");
-    await response.arrayBuffer();
+    ["..", "s1-take1-f1.jpg"],
+    ["gen-1/..", "s1-take1-f2.jpg"],
+    ["gen-1", "../s1-take1-f2.jpg"],
+    ["gen-1", "../gen-1/s1-take1-f1.jpg"],
+    ["gen-1", "..%2Fs1-take1-f2.jpg"],
+    ["gen-1", "generation.json"],
+    ["gen-1", "s1-take1.mp4"],
+    ["gen-1", "s1-take1-f4.jpg"],
+  ])("returns 404 for the invalid path %s/%s", async (generationId, file) => {
+    const response = await image(generationId, file);
+    expect(response.status).toBe(404);
   });
 
   it.each([
-    ["..", "s1-take1.mp4"],
-    ["gen-1", "generation.json"],
-    ["gen-1", "../gen-1/s1-take1.mp4"],
-    ["gen-1", "s2-take1.mp4"],
-    ["missing", "s1-take1.mp4"],
-  ])("returns 404 for %s/%s", async (generationId, file) => {
-    const response = await video(generationId, file);
+    ["gen-1", "s2-take1-f1.jpg"],
+    ["gen-1", "s1-take1-f3.jpg"],
+    ["missing", "s1-take1-f1.jpg"],
+  ])("returns 404 when %s/%s is not a file", async (generationId, file) => {
+    const response = await image(generationId, file);
     expect(response.status).toBe(404);
   });
 });

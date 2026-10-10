@@ -5,12 +5,14 @@ import { useEffect, useState } from "react";
 import type {
   GenerationState,
   ScriptEntry,
+  StoryboardLabel,
   Take,
+  TakeFrame,
 } from "@/lib/generation/schema";
 
 const STAGE_LABELS: Record<GenerationState["stage"], string> = {
   scripts: "writing scripts",
-  videos: "rendering takes",
+  videos: "rendering previews",
   done: "done",
 };
 
@@ -24,8 +26,20 @@ const TAKE_STATUS_LABELS: Record<Take["status"], string> = {
 const isActive = (generation: GenerationState) =>
   generation.status === "queued" || generation.status === "running";
 
-const videoUrl = (generationId: string, file: string) =>
-  `/api/generations/${encodeURIComponent(generationId)}/videos/${encodeURIComponent(file)}`;
+const FRAME_LABELS: Record<StoryboardLabel, string> = {
+  hook: "Hook",
+  product: "Product",
+  reveal: "Reveal",
+};
+
+const imageUrl = (generationId: string, file: string) =>
+  `/api/generations/${encodeURIComponent(generationId)}/images/${encodeURIComponent(file)}`;
+
+// Generations saved before storyboard previews have no frames.
+const takeFrames = (take: Take): TakeFrame[] => take.frames ?? [];
+
+const formatUsd = (value: number | null | undefined) =>
+  `$${(value ?? 0).toFixed(2)}`;
 
 // Builds the picks file in the browser, so no extra API route is needed.
 function downloadPicks(generation: GenerationState) {
@@ -39,7 +53,11 @@ function downloadPicks(generation: GenerationState) {
         title: script.title,
         hairstyle: script.hairstyle,
         takeIndex,
-        file: take.file,
+        frames: takeFrames(take).map(({ label, atSecond, file }) => ({
+          label,
+          atSecond,
+          file,
+        })),
         script,
       },
     ];
@@ -123,15 +141,18 @@ export function GenerationView({ generationId }: { generationId: string }) {
           {generation.stage === "videos" &&
             takes.length > 0 &&
             ` (${finished}/${takes.length} takes)`}{" "}
-          · ≈ ${generation.estimatedCostUsd.toFixed(2)} Sora · started{" "}
-          {new Date(generation.createdAt).toLocaleString()}
+          · started {new Date(generation.createdAt).toLocaleString()}
+        </p>
+        <p className="text-sm text-zinc-500">
+          ≈ {formatUsd(generation.estimatedCostUsd)} estimated ·{" "}
+          {formatUsd(generation.actualCostUsd)} spent on images
         </p>
         <p className="text-sm text-zinc-500">
           {settings.hairstylesPerBrief} hairstyle
           {settings.hairstylesPerBrief === 1 ? "" : "s"} per brief ·{" "}
           {settings.takesPerScript} take
           {settings.takesPerScript === 1 ? "" : "s"} per script ·{" "}
-          {settings.seconds} s each
+          {settings.seconds} s video each
         </p>
         {generation.error && (
           <p className="rounded-md bg-red-50 px-4 py-3 wrap-break-word text-red-700 dark:bg-red-950 dark:text-red-300">
@@ -234,9 +255,9 @@ function ScriptCard({
         </p>
       </div>
 
-      <div className="grid grid-cols-2 gap-3 sm:max-w-3xl sm:grid-cols-3">
+      <div className="flex min-w-0 flex-col gap-5 sm:max-w-2xl">
         {takes.map((take) => (
-          <TakeCell
+          <TakeRow
             key={take.index}
             generationId={generationId}
             take={take}
@@ -289,18 +310,22 @@ function ScriptCard({
             {script.rationale}
           </span>
         </p>
-        <details>
-          <summary className="cursor-pointer font-medium">Sora prompt</summary>
-          <p className="mt-1 whitespace-pre-line text-zinc-600 dark:text-zinc-400">
-            {script.soraPrompt}
-          </p>
-        </details>
+        {script.videoPrompt && (
+          <details>
+            <summary className="cursor-pointer font-medium">
+              Video prompt
+            </summary>
+            <p className="mt-1 whitespace-pre-line text-zinc-600 dark:text-zinc-400">
+              {script.videoPrompt}
+            </p>
+          </details>
+        )}
       </div>
     </article>
   );
 }
 
-function TakeCell({
+function TakeRow({
   generationId,
   take,
   picked,
@@ -313,19 +338,18 @@ function TakeCell({
   picking: boolean;
   onPick: () => void;
 }) {
-  const file = take.status === "completed" ? take.file : null;
+  const frames = takeFrames(take);
+  const finished =
+    take.status === "completed" &&
+    frames.length > 0 &&
+    frames.every((frame) => frame.file);
   return (
-    <div className="flex min-w-0 flex-col gap-2">
-      {file ? (
-        <video
-          controls
-          playsInline
-          preload="metadata"
-          src={videoUrl(generationId, file)}
-          className={`aspect-9/16 max-h-[420px] w-full rounded-lg bg-black object-contain ${picked ? "ring-2 ring-emerald-500" : ""}`}
-        />
-      ) : (
-        <div className="flex aspect-9/16 max-h-[420px] w-full flex-col items-center justify-center gap-2 overflow-auto rounded-lg bg-zinc-100 p-3 text-center text-xs wrap-break-word dark:bg-zinc-900">
+    <section
+      className={`flex min-w-0 flex-col gap-2 rounded-lg p-2 ${picked ? "bg-emerald-50 ring-2 ring-emerald-500 dark:bg-emerald-950/40" : ""}`}
+    >
+      <div className="flex flex-wrap items-center justify-between gap-2 text-sm">
+        <span className="flex flex-wrap items-center gap-x-2">
+          <span className="font-medium">Take {take.index}</span>
           <span
             className={
               take.status === "failed"
@@ -335,19 +359,16 @@ function TakeCell({
           >
             {TAKE_STATUS_LABELS[take.status]}
           </span>
-          {take.error && (
-            <span className="text-red-600 dark:text-red-400">{take.error}</span>
+          {take.costUsd !== null && (
+            <span className="text-zinc-500">{formatUsd(take.costUsd)}</span>
           )}
-        </div>
-      )}
-      <div className="flex flex-wrap items-center justify-between gap-2 text-sm">
-        <span className="text-zinc-500">Take {take.index}</span>
+        </span>
         {picked ? (
           <span className="rounded bg-emerald-100 px-2 py-0.5 text-xs font-medium text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300">
             Picked
           </span>
         ) : (
-          file && (
+          finished && (
             <button
               type="button"
               disabled={picking}
@@ -359,6 +380,69 @@ function TakeCell({
           )
         )}
       </div>
-    </div>
+      {frames.length > 0 && (
+        <ol className="grid grid-cols-3 gap-2">
+          {frames.map((frame, position) => (
+            <FrameCell
+              key={`${position}-${frame.label}`}
+              generationId={generationId}
+              frame={frame}
+              status={take.status}
+            />
+          ))}
+        </ol>
+      )}
+      {take.error && (
+        <p className="text-xs wrap-break-word text-red-600 dark:text-red-400">
+          {take.error}
+        </p>
+      )}
+    </section>
+  );
+}
+
+function FrameCell({
+  generationId,
+  frame,
+  status,
+}: {
+  generationId: string;
+  frame: TakeFrame;
+  status: Take["status"];
+}) {
+  const caption = `${FRAME_LABELS[frame.label] ?? frame.label} · ${frame.atSecond} s`;
+  return (
+    <li className="flex min-w-0 flex-col gap-1">
+      {frame.file ? (
+        <a
+          href={imageUrl(generationId, frame.file)}
+          target="_blank"
+          rel="noopener noreferrer"
+          title={`Open ${caption} full size`}
+          className="block overflow-hidden rounded-md bg-zinc-100 dark:bg-zinc-900"
+        >
+          {/* Frames are already sized JPEGs served by our own route, so the image optimizer adds nothing. */}
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src={imageUrl(generationId, frame.file)}
+            alt={caption}
+            loading="lazy"
+            decoding="async"
+            className="aspect-9/16 w-full object-cover"
+          />
+        </a>
+      ) : (
+        <div className="flex aspect-9/16 w-full items-center justify-center rounded-md bg-zinc-100 p-1 text-center text-xs text-zinc-500 dark:bg-zinc-900">
+          {status === "running"
+            ? "Rendering…"
+            : status === "pending"
+              ? "Waiting"
+              : "Not rendered"}
+        </div>
+      )}
+      <span className="truncate text-xs text-zinc-600 dark:text-zinc-400">
+        {caption}
+      </span>
+    </li>
   );
 }

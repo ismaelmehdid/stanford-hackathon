@@ -33,7 +33,8 @@ export function GenerationList() {
               <span className="text-sm text-zinc-500">
                 {generation.status} · {generation.scripts.length} scripts ·{" "}
                 {Object.keys(generation.picks).length} picked · ≈ $
-                {generation.estimatedCostUsd.toFixed(2)} ·{" "}
+                {generation.estimatedCostUsd.toFixed(2)} estimated · $
+                {(generation.actualCostUsd ?? 0).toFixed(2)} spent ·{" "}
                 {new Date(generation.createdAt).toLocaleString()}
               </span>
             </Link>

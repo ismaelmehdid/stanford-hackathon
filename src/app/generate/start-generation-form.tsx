@@ -5,12 +5,14 @@ import { useEffect, useState, type FormEvent } from "react";
 import {
   clampGenerationSettings,
   DEFAULT_GENERATION_SETTINGS,
-  estimateSoraCostUsd,
+  estimatePreviewCostUsd,
+  FRAMES_PER_TAKE,
   GENERATION_LIMITS,
-  SORA_PRICE_PER_SECOND_USD,
-  totalVideoSeconds,
+  IMAGE_QUALITIES,
+  totalImages,
   VIDEO_SECONDS,
   type GenerationSettings,
+  type ImageQuality,
 } from "@/lib/generation/config";
 import type { GenerationSource } from "@/lib/generation/sources";
 
@@ -47,6 +49,9 @@ function defaultSource(sources: GenerationSource[]) {
 const allBriefIndexes = (source: GenerationSource | null) =>
   source ? source.briefs.map((brief) => brief.index) : [];
 
+const isImageQuality = (value: unknown): value is ImageQuality =>
+  (IMAGE_QUALITIES as readonly unknown[]).includes(value);
+
 export function StartGenerationForm() {
   const router = useRouter();
   const [sources, setSources] = useState<GenerationSource[] | null>(null);
@@ -55,10 +60,8 @@ export function StartGenerationForm() {
   const [settings, setSettings] = useState<GenerationSettings>(
     DEFAULT_GENERATION_SETTINGS,
   );
-  // The server's price for its SORA_MODEL; the browser cannot read that variable.
-  const [pricePerSecondUsd, setPricePerSecondUsd] = useState(
-    SORA_PRICE_PER_SECOND_USD,
-  );
+  // The server's PREVIEW_IMAGE_QUALITY; the browser cannot read that variable.
+  const [quality, setQuality] = useState<ImageQuality>("medium");
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
@@ -66,14 +69,10 @@ export function StartGenerationForm() {
     fetch("/api/generation-sources", { cache: "no-store" })
       .then((response) => response.json())
       .then(
-        (body: {
-          sources?: GenerationSource[];
-          soraPricePerSecondUsd?: number | null;
-        }) => {
+        (body: { sources?: GenerationSource[]; imageQuality?: unknown }) => {
           const list = body.sources ?? [];
           const initial = defaultSource(list);
-          if (typeof body.soraPricePerSecondUsd === "number")
-            setPricePerSecondUsd(body.soraPricePerSecondUsd);
+          if (isImageQuality(body.imageQuality)) setQuality(body.imageQuality);
           setSources(list);
           setSourceId(initial?.id ?? "");
           setBriefIndexes(allBriefIndexes(initial));
@@ -99,13 +98,9 @@ export function StartGenerationForm() {
         ),
       0,
     );
-  const seconds = totalVideoSeconds(scriptCount, effective);
-  const costUsd = estimateSoraCostUsd(
-    scriptCount,
-    effective,
-    pricePerSecondUsd,
-  );
-  const overCap = seconds > GENERATION_LIMITS.totalSeconds;
+  const images = totalImages(scriptCount, effective);
+  const costUsd = estimatePreviewCostUsd(scriptCount, effective, quality);
+  const overCap = images > GENERATION_LIMITS.totalImages;
   const canStart = !submitting && !!source && scriptCount > 0 && !overCap;
 
   function selectSource(id: string) {
@@ -245,7 +240,7 @@ export function StartGenerationForm() {
           </label>
         ))}
         <label className="flex flex-col gap-1 text-sm font-medium">
-          Seconds per take
+          Video length
           <select
             value={settings.seconds}
             onChange={(event) =>
@@ -267,17 +262,26 @@ export function StartGenerationForm() {
         </label>
       </div>
 
-      <p className="text-sm text-zinc-600 dark:text-zinc-400">
-        {scriptCount} {scriptCount === 1 ? "script" : "scripts"} ×{" "}
-        {effective.takesPerScript}{" "}
-        {effective.takesPerScript === 1 ? "take" : "takes"} ×{" "}
-        {effective.seconds} s = {seconds} s ≈ ${costUsd.toFixed(2)} Sora, plus
-        OpenAI usage for the scripts.
-      </p>
+      <div className="flex flex-col gap-1 text-sm text-zinc-600 dark:text-zinc-400">
+        <p>
+          {scriptCount} {scriptCount === 1 ? "script" : "scripts"} ×{" "}
+          {effective.takesPerScript}{" "}
+          {effective.takesPerScript === 1 ? "take" : "takes"} ×{" "}
+          {FRAMES_PER_TAKE} frames = {images}{" "}
+          {images === 1 ? "image" : "images"}, about ${costUsd.toFixed(2)}
+        </p>
+        <p className="text-zinc-500">
+          Each take is a storyboard of a {effective.seconds} s video, rendered
+          at {quality} quality. The estimate covers the rendered images; writing
+          the scripts and sending frame 1 as the reference for frames 2 and 3
+          add more OpenAI usage.
+        </p>
+      </div>
       {overCap && (
         <p className="rounded-md bg-amber-50 px-4 py-3 text-sm text-amber-800 dark:bg-amber-950 dark:text-amber-300">
-          This is over the {GENERATION_LIMITS.totalSeconds} s limit per
-          generation. Select fewer briefs, hairstyles, takes or seconds.
+          This would create {images} images. The limit is{" "}
+          {GENERATION_LIMITS.totalImages} per generation. Select fewer briefs,
+          hairstyles or takes.
         </p>
       )}
       {scriptCount === 0 && (
@@ -295,7 +299,7 @@ export function StartGenerationForm() {
           {submitting ? "Starting…" : "Start generation"}
         </button>
         <p className="text-sm text-zinc-500">
-          Each take renders in a few minutes, two at a time.
+          Each take renders in a minute or two, two at a time.
         </p>
       </div>
       {error && (

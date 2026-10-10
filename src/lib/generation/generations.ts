@@ -6,21 +6,32 @@ import { isPresent } from "@/lib/analysis/instagram";
 import { mapWithConcurrency } from "@/lib/analysis/pipeline";
 import {
   clampGenerationSettings,
-  estimateSoraCostUsd,
+  estimatePreviewCostUsd,
+  FRAMES_PER_TAKE,
   GENERATION_LIMITS,
-  totalVideoSeconds,
+  totalImages,
   type GenerationSettings,
 } from "./config";
-import type { GenerationState, ScriptEntry, Take } from "./schema";
+import {
+  checkPreviewAvailable,
+  generateStoryboard,
+  PreviewUnavailableError,
+} from "./previews";
+import type {
+  GenerationState,
+  ScriptEntry,
+  Take,
+  TakeFrame,
+  VideoScript,
+} from "./schema";
 import { generateScripts, planScriptSlots } from "./scripts";
-import { checkSoraAvailable, generateTake, SoraUnavailableError } from "./sora";
 import { loadAnalysis } from "./sources";
 
 const GENERATION_ID_PATTERN = /^[a-z0-9._-]{1,80}$/;
-const VIDEO_FILE_PATTERN = /^s\d{1,3}-take\d\.mp4$/;
+const IMAGE_FILE_PATTERN = /^s\d{1,3}-take\d-f[1-3]\.jpg$/;
 // A running generation saves at least this often, so other processes can tell it is alive.
 const HEARTBEAT_MS = 30_000;
-// Sora renders run in parallel up to this many at a time per generation.
+// Storyboards render up to this many at a time per generation; previews.ts also caps image requests per process.
 const TAKE_CONCURRENCY = 2;
 const ABANDONED_ERROR =
   "The server stopped during this generation. Start a new one; finished takes are kept.";
@@ -43,8 +54,8 @@ export const isValidGenerationId = (id: string) =>
   GENERATION_ID_PATTERN.test(id) &&
   !id.includes("..");
 
-export const isValidVideoFile = (file: string) =>
-  typeof file === "string" && VIDEO_FILE_PATTERN.test(file);
+export const isValidImageFile = (file: string) =>
+  typeof file === "string" && IMAGE_FILE_PATTERN.test(file);
 
 const generationsRoot = () => path.join(dataDir(), "generations");
 
@@ -55,8 +66,10 @@ export function generationDir(id: string) {
 
 const stateFile = (id: string) =>
   path.join(generationDir(id), "generation.json");
-const takeFile = (scriptId: string, take: Take) =>
-  `${scriptId}-take${take.index}.mp4`;
+const takePrefix = (scriptId: string, take: Take) =>
+  `${scriptId}-take${take.index}`;
+const frameFile = (prefix: string, frame: number) =>
+  `${prefix}-f${frame + 1}.jpg`;
 // Typed partial update, so a misspelled status or field fails the typecheck.
 const updateTake = (take: Take, changes: Partial<Take>) =>
   Object.assign(take, changes);
@@ -181,17 +194,17 @@ export async function createGeneration(input: {
   if (slots.length === 0)
     throw new Error("Select at least one brief with a hairstyle variation.");
 
-  // Reject over-cap requests here, before any paid OpenAI or Sora call.
-  // The estimate also rejects a SORA_MODEL with no known price.
-  const estimatedCostUsd = estimateSoraCostUsd(slots.length, settings);
-  const seconds = totalVideoSeconds(slots.length, settings);
-  if (seconds > GENERATION_LIMITS.totalSeconds) {
+  // Reject over-cap requests here, before any paid OpenAI call.
+  // The estimate also rejects an unknown PREVIEW_IMAGE_QUALITY.
+  const estimatedCostUsd = estimatePreviewCostUsd(slots.length, settings);
+  const images = totalImages(slots.length, settings);
+  if (images > GENERATION_LIMITS.totalImages) {
     throw new Error(
-      `This would render ${seconds} s of video (≈ $${estimatedCostUsd.toFixed(2)}). The limit is ${GENERATION_LIMITS.totalSeconds} s.`,
+      `This would create ${images} images (≈ $${estimatedCostUsd.toFixed(2)}). The limit is ${GENERATION_LIMITS.totalImages}.`,
     );
   }
-  // A free call, so a retired or inaccessible Sora API fails here instead of after the paid script call.
-  await checkSoraAvailable();
+  // A free call, so an unusable image model fails here instead of after the paid script call.
+  await checkPreviewAvailable();
 
   const now = new Date().toISOString();
   const stamp = now.replace(/[-:]/g, "").replace(/\..+$/, "").replace("T", "-");
@@ -209,6 +222,7 @@ export async function createGeneration(input: {
     error: null,
     pid: process.pid,
     estimatedCostUsd,
+    actualCostUsd: 0,
     scripts: [],
     picks: {},
   };
@@ -223,13 +237,31 @@ async function fileExists(file: string) {
   );
 }
 
-const pendingTake = (index: number): Take => ({
+// One entry per storyboard frame, so the review page can label frames before they are rendered.
+const emptyFrames = (script: VideoScript): TakeFrame[] =>
+  script.storyboard.map(({ label, atSecond }) => ({
+    label,
+    atSecond,
+    file: null,
+  }));
+
+const pendingTake = (script: VideoScript, index: number): Take => ({
   index,
   status: "pending",
-  soraVideoId: null,
-  file: null,
+  frames: emptyFrames(script),
+  costUsd: null,
   error: null,
 });
+
+// A take is finished only with every storyboard frame on disk.
+const hasAllFrames = (take: Take) =>
+  take.frames.length === FRAMES_PER_TAKE &&
+  take.frames.every((frame) => Boolean(frame.file));
+
+const sumTakeCosts = (state: GenerationState) =>
+  state.scripts
+    .flatMap((entry) => entry.takes)
+    .reduce((total, take) => total + (take.costUsd ?? 0), 0);
 
 export async function executeGeneration(
   state: GenerationState,
@@ -258,7 +290,7 @@ export async function executeGeneration(
   state.pid = process.pid;
   state.status = "running";
   state.error = null;
-  // Sora renders save nothing for minutes; keep updatedAt fresh so the job does not read as abandoned.
+  // A slow image call saves nothing for minutes; keep updatedAt fresh so the job does not read as abandoned.
   const heartbeat = setInterval(() => void saveProgress(), HEARTBEAT_MS);
   heartbeat.unref();
   try {
@@ -280,7 +312,7 @@ export async function executeGeneration(
       state.scripts = scripts.map((script): ScriptEntry => ({
         script,
         takes: Array.from({ length: state.settings.takesPerScript }, (_, i) =>
-          pendingTake(i + 1),
+          pendingTake(script, i + 1),
         ),
       }));
     }
@@ -292,16 +324,30 @@ export async function executeGeneration(
     const jobs = state.scripts
       .flatMap((entry) => entry.takes.map((take) => ({ entry, take })))
       .sort((a, b) => a.take.index - b.take.index);
-    // Once Sora refuses the key or model, every later take would fail the same way; do not start them.
+    // Once the image API refuses the key or model, every later take would fail the same way; do not start them.
     let unavailable: string | null = null;
     await mapWithConcurrency(
       jobs,
       TAKE_CONCURRENCY,
       async ({ entry, take }) => {
-        const file = takeFile(entry.script.id, take);
-        const outPath = path.join(dir, file);
-        if (await fileExists(outPath)) {
-          updateTake(take, { status: "completed", file, error: null });
+        const prefix = takePrefix(entry.script.id, take);
+        const finished = entry.script.storyboard.map(
+          ({ label, atSecond }, frame) => ({
+            label,
+            atSecond,
+            file: frameFile(prefix, frame),
+          }),
+        );
+        const onDisk = await Promise.all(
+          finished.map(({ file }) => fileExists(path.join(dir, file))),
+        );
+        // Resume: a take with every frame on disk is done; a partial one is rendered again.
+        if (finished.length === FRAMES_PER_TAKE && onDisk.every(Boolean)) {
+          updateTake(take, {
+            status: "completed",
+            frames: finished,
+            error: null,
+          });
           await saveProgress();
           return;
         }
@@ -310,31 +356,48 @@ export async function executeGeneration(
           await saveProgress();
           return;
         }
-        updateTake(take, { status: "running", file: null, error: null });
+        // Money already spent on this take in an earlier run stays counted.
+        const earlierCostUsd = take.costUsd ?? 0;
+        const recordCost = (costUsd: number) => {
+          take.costUsd = earlierCostUsd + costUsd;
+          state.actualCostUsd = sumTakeCosts(state);
+        };
+        updateTake(take, {
+          status: "running",
+          frames: emptyFrames(entry.script),
+          error: null,
+        });
         await saveProgress();
         try {
-          await generateTake({
-            prompt: entry.script.soraPrompt,
-            seconds: state.settings.seconds,
-            outPath,
-            onStarted: (videoId) => {
-              take.soraVideoId = videoId;
-              void saveProgress();
+          const result = await generateStoryboard({
+            frames: entry.script.storyboard,
+            outDir: dir,
+            filePrefix: prefix,
+            onFrame: async (frame, costUsd) => {
+              const slot = take.frames.find(
+                (item) => item.label === frame.label,
+              );
+              if (slot) slot.file = frame.file;
+              recordCost(costUsd);
+              await saveProgress();
             },
           });
-          updateTake(take, { status: "completed", file });
+          recordCost(result.costUsd);
+          updateTake(take, { status: "completed", frames: result.frames });
         } catch (error) {
-          if (error instanceof SoraUnavailableError)
+          if (error instanceof PreviewUnavailableError)
             unavailable ??= errorMessage(error);
           updateTake(take, { status: "failed", error: errorMessage(error) });
           console.error(
-            `Generation ${state.id} take ${file} failed`,
+            `Generation ${state.id} take ${prefix} failed`,
             errorMessage(error),
           );
         }
         await saveProgress();
       },
     );
+    // A refused key or model fails the whole generation; finished takes stay pickable.
+    if (unavailable) throw new Error(unavailable);
     // A generation with nothing to pick is a failure, so a dead provider never reads as completed.
     const takes = state.scripts.flatMap((entry) => entry.takes);
     if (!takes.some((take) => take.status === "completed")) {
@@ -385,7 +448,7 @@ export function pickTake(
     if (!entry) throw new Error("Unknown script.");
     const take = entry.takes.find((item) => item.index === takeIndex);
     if (!take) throw new Error("Unknown take.");
-    if (take.status !== "completed" || !take.file)
+    if (take.status !== "completed" || !hasAllFrames(take))
       throw new Error("Only a finished take can be picked.");
 
     state.picks = { ...state.picks, [scriptId]: takeIndex };

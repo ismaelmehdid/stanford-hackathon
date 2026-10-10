@@ -17,28 +17,41 @@ import {
   generationDir,
   getGeneration,
   isValidGenerationId,
-  isValidVideoFile,
+  isValidImageFile,
   listGenerations,
   pickTake,
   startGeneration,
 } from "./generations";
-import type { GenerationState, VideoScript } from "./schema";
+import {
+  checkPreviewAvailable,
+  generateStoryboard,
+  PreviewUnavailableError,
+} from "./previews";
+import type { GenerationState, Take, VideoScript } from "./schema";
 import { generateScripts } from "./scripts";
-import { checkSoraAvailable, generateTake, SoraUnavailableError } from "./sora";
 
-// Keep the real (pure) slot planning; only the paid OpenAI and Sora calls are mocked.
+// Keep the real (pure) slot planning and error class; only the paid OpenAI calls are mocked.
 vi.mock("./scripts", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./scripts")>()),
   generateScripts: vi.fn(),
 }));
-vi.mock("./sora", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("./sora")>()),
-  checkSoraAvailable: vi.fn(),
-  generateTake: vi.fn(),
+vi.mock("./previews", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./previews")>()),
+  checkPreviewAvailable: vi.fn(),
+  generateStoryboard: vi.fn(),
 }));
 
 const SOURCE = "sample:headandshoulders";
+// A power of two, so summed costs compare exactly.
+const FRAME_COST = 0.25;
+const TAKE_COST = FRAME_COST * 3;
 let tempDir: string;
+
+const storyboardOf = (id: string): VideoScript["storyboard"] => [
+  { label: "hook", atSecond: 1, imagePrompt: `Hook frame for ${id}` },
+  { label: "product", atSecond: 4, imagePrompt: `Product frame for ${id}` },
+  { label: "reveal", atSecond: 8, imagePrompt: `Reveal frame for ${id}` },
+];
 
 const fakeScripts = async (
   _analysis: unknown,
@@ -49,23 +62,44 @@ const fakeScripts = async (
     id: `s${index + 1}`,
     title: `Script ${index + 1}`,
     format: "comparison",
-    soraPrompt: `Prompt for s${index + 1}`,
+    videoPrompt: `Prompt for s${index + 1}`,
+    storyboard: storyboardOf(`s${index + 1}`),
     onScreenText: ["Scalp SOS"],
     voiceover: "Clean scalp first.",
     emotionalTriggers: ["humor"],
     rationale: "Keeps the hook.",
   }));
 
-type TakeInput = Parameters<typeof generateTake>[0];
+type StoryboardInput = Parameters<typeof generateStoryboard>[0];
 
-// Renders instantly: reports the Sora id, then writes fake MP4 bytes like the real client.
-async function fakeTake({ outPath, onStarted }: TakeInput) {
-  const videoId = `video_${path.basename(outPath, ".mp4")}`;
-  await onStarted?.(videoId);
-  await mkdir(path.dirname(outPath), { recursive: true });
-  await writeFile(outPath, "mp4");
-  return { videoId };
+// Renders instantly: writes fake JPEG bytes frame by frame and reports progress like the real client.
+// failAtFrame makes the call throw after the frames before it were written.
+async function fakeStoryboard(
+  { frames, outDir, filePrefix, onFrame }: StoryboardInput,
+  failAtFrame?: { index: number; error: Error },
+) {
+  const written: {
+    label: (typeof frames)[number]["label"];
+    atSecond: number;
+    file: string;
+  }[] = [];
+  await mkdir(outDir, { recursive: true });
+  for (const [index, frame] of frames.entries()) {
+    if (failAtFrame?.index === index) throw failAtFrame.error;
+    const file = `${filePrefix}-f${index + 1}.jpg`;
+    await writeFile(path.join(outDir, file), "jpg");
+    const preview = { label: frame.label, atSecond: frame.atSecond, file };
+    written.push(preview);
+    await onFrame?.(preview, FRAME_COST * (index + 1));
+  }
+  return { frames: written, costUsd: FRAME_COST * frames.length };
 }
+
+const finishedFrames = (prefix: string): Take["frames"] => [
+  { label: "hook", atSecond: 1, file: `${prefix}-f1.jpg` },
+  { label: "product", atSecond: 4, file: `${prefix}-f2.jpg` },
+  { label: "reveal", atSecond: 8, file: `${prefix}-f3.jpg` },
+];
 
 const stateFile = (id: string) =>
   path.join(tempDir, "generations", id, "generation.json");
@@ -74,28 +108,43 @@ const takeOf = (state: GenerationState, scriptId: string, index: number) =>
   state.scripts
     .find((entry) => entry.script.id === scriptId)
     ?.takes.find((take) => take.index === index);
+const allTakes = (state: GenerationState) =>
+  state.scripts.flatMap((entry) => entry.takes);
+
+async function writeFrames(id: string, prefix: string, frames: number[]) {
+  await mkdir(generationDir(id), { recursive: true });
+  for (const frame of frames) {
+    await writeFile(
+      path.join(generationDir(id), `${prefix}-f${frame}.jpg`),
+      "old",
+    );
+  }
+}
 
 beforeEach(async () => {
   tempDir = await mkdtemp(path.join(os.tmpdir(), "generations-"));
   vi.stubEnv("ANALYSIS_DATA_DIR", tempDir);
   vi.stubEnv("OPENAI_API_KEY", "test-key");
+  vi.stubEnv("PREVIEW_IMAGE_QUALITY", "");
   vi.mocked(generateScripts).mockImplementation(fakeScripts);
-  vi.mocked(generateTake).mockImplementation(fakeTake);
-  vi.mocked(checkSoraAvailable).mockResolvedValue(undefined);
+  vi.mocked(checkPreviewAvailable).mockResolvedValue();
+  vi.mocked(generateStoryboard).mockImplementation((input) =>
+    fakeStoryboard(input),
+  );
   vi.spyOn(console, "error").mockImplementation(() => {});
 });
 
 afterEach(async () => {
   vi.mocked(generateScripts).mockReset();
-  vi.mocked(generateTake).mockReset();
-  vi.mocked(checkSoraAvailable).mockReset();
+  vi.mocked(checkPreviewAvailable).mockReset();
+  vi.mocked(generateStoryboard).mockReset();
   vi.restoreAllMocks();
   vi.unstubAllEnvs();
   await rm(tempDir, { recursive: true, force: true });
 });
 
 describe("validators", () => {
-  it("rejects path traversal in generation ids and video file names", async () => {
+  it("rejects path traversal in generation ids and image file names", async () => {
     expect(isValidGenerationId("headandshoulders-20261010-014512")).toBe(true);
     expect(isValidGenerationId("headandshoulders-20261010-014512-2")).toBe(
       true,
@@ -106,23 +155,28 @@ describe("validators", () => {
     expect(await getGeneration("../secrets")).toBeNull();
     expect(() => generationDir("../secrets")).toThrow();
 
-    expect(isValidVideoFile("s1-take1.mp4")).toBe(true);
-    expect(isValidVideoFile("s123-take3.mp4")).toBe(true);
+    expect(isValidImageFile("s1-take1-f1.jpg")).toBe(true);
+    expect(isValidImageFile("s123-take3-f3.jpg")).toBe(true);
     for (const file of [
-      "../s1-take1.mp4",
-      "s1-take1.mp4/..",
-      "s1-take10.mp4",
-      "s1-take1.mp4.tmp",
+      "../s1-take1-f1.jpg",
+      "s1-take1-f1.jpg/..",
+      "s1-take1-f0.jpg",
+      "s1-take1-f4.jpg",
+      "s1-take10-f1.jpg",
+      "s1-take1-f1.jpg.tmp",
+      "s1-take1-f1.jpeg",
+      "s1-take1.mp4",
+      "s1234-take1-f1.jpg",
       "generation.json",
       "..%2Fgeneration.json",
     ]) {
-      expect(isValidVideoFile(file)).toBe(false);
+      expect(isValidImageFile(file)).toBe(false);
     }
   });
 });
 
 describe("createGeneration", () => {
-  it("rejects a request over the 120 s cap before any OpenAI call", async () => {
+  it("rejects a request over the 60 image cap before any OpenAI call", async () => {
     await expect(
       createGeneration({
         sourceId: SOURCE,
@@ -130,36 +184,50 @@ describe("createGeneration", () => {
         settings: { hairstylesPerBrief: 5, takesPerScript: 3, seconds: 12 },
       }),
     ).rejects.toThrow(
-      "This would render 540 s of video (≈ $54.00). The limit is 120 s.",
+      "This would create 135 images (≈ $4.73). The limit is 60.",
     );
     expect(generateScripts).not.toHaveBeenCalled();
-    expect(generateTake).not.toHaveBeenCalled();
-    expect(checkSoraAvailable).not.toHaveBeenCalled();
+    expect(checkPreviewAvailable).not.toHaveBeenCalled();
+    expect(generateStoryboard).not.toHaveBeenCalled();
     await expect(stat(path.join(tempDir, "generations"))).rejects.toThrow();
   });
 
-  it("checks Sora before anything is spent or stored", async () => {
-    vi.mocked(checkSoraAvailable).mockRejectedValue(
-      new Error("Sora is unavailable for this OpenAI key (404 Not found.)."),
-    );
+  it("checks the image model for free before the paid script call", async () => {
+    const message =
+      "Image previews are unavailable for this OpenAI key (404 The model does not exist.). Nothing was spent.";
+    vi.mocked(checkPreviewAvailable).mockRejectedValueOnce(new Error(message));
+
     await expect(createGeneration({ sourceId: SOURCE })).rejects.toThrow(
-      "Sora is unavailable for this OpenAI key",
+      message,
     );
     expect(generateScripts).not.toHaveBeenCalled();
-    await expect(stat(path.join(tempDir, "generations"))).rejects.toThrow();
+    expect(generateStoryboard).not.toHaveBeenCalled();
+    expect(await listGenerations()).toEqual([]);
+
+    await createGeneration({ sourceId: SOURCE });
+    expect(checkPreviewAvailable).toHaveBeenCalledTimes(2);
   });
 
-  it("estimates with the configured model's price and rejects an unpriced one", async () => {
-    vi.stubEnv("SORA_MODEL", "sora-2-pro");
+  it("accepts a request of exactly 60 images", async () => {
+    const state = await createGeneration({
+      sourceId: SOURCE,
+      briefIndexes: [0, 1],
+      settings: { hairstylesPerBrief: 5, takesPerScript: 2 },
+    });
+    expect(state.estimatedCostUsd).toBe(2.1);
+  });
+
+  it("estimates with the configured quality and rejects an unknown one", async () => {
+    vi.stubEnv("PREVIEW_IMAGE_QUALITY", "high");
     const state = await createGeneration({ sourceId: SOURCE });
-    expect(state.estimatedCostUsd).toBe(14.4);
+    expect(state.estimatedCostUsd).toBe(2.34);
 
-    vi.stubEnv("SORA_MODEL", "sora-9");
-    vi.mocked(checkSoraAvailable).mockClear();
+    vi.stubEnv("PREVIEW_IMAGE_QUALITY", "ultra");
     await expect(createGeneration({ sourceId: SOURCE })).rejects.toThrow(
-      'SORA_MODEL "sora-9" has no known price.',
+      'PREVIEW_IMAGE_QUALITY "ultra" is not supported.',
     );
-    expect(checkSoraAvailable).not.toHaveBeenCalled();
+    expect(await listGenerations()).toHaveLength(1);
+    expect(generateScripts).not.toHaveBeenCalled();
   });
 
   it("writes a queued generation with defaults for all briefs", async () => {
@@ -172,7 +240,8 @@ describe("createGeneration", () => {
       status: "queued",
       stage: "scripts",
       error: null,
-      estimatedCostUsd: 4.8,
+      estimatedCostUsd: 0.63,
+      actualCostUsd: 0,
       scripts: [],
       picks: {},
     });
@@ -193,7 +262,7 @@ describe("createGeneration", () => {
       takesPerScript: 3,
       seconds: 8,
     });
-    expect(state.estimatedCostUsd).toBe(2.4);
+    expect(state.estimatedCostUsd).toBe(0.32);
   });
 
   it("gives generations created in the same second distinct ids", async () => {
@@ -224,13 +293,19 @@ describe("createGeneration", () => {
 
 describe("executeGeneration", () => {
   it("renders every take; a failed take does not stop the others", async () => {
-    vi.mocked(generateTake).mockImplementation(async (input) => {
-      if (input.outPath.endsWith("s2-take2.mp4")) {
-        await input.onStarted?.("video_moderated");
-        throw new Error("Sora render failed: moderation_blocked");
-      }
-      return fakeTake(input);
-    });
+    vi.mocked(generateStoryboard).mockImplementation((input) =>
+      fakeStoryboard(
+        input,
+        input.filePrefix === "s2-take2"
+          ? {
+              index: 1,
+              error: new Error(
+                "The image API returned no image for frame 2 (product).",
+              ),
+            }
+          : undefined,
+      ),
+    );
     const state = await createGeneration({ sourceId: SOURCE });
     await executeGeneration(state);
 
@@ -245,43 +320,111 @@ describe("executeGeneration", () => {
       "s2",
       "s3",
     ]);
-    expect(generateTake).toHaveBeenCalledTimes(6);
-    expect(generateTake).toHaveBeenCalledWith(
+    expect(generateStoryboard).toHaveBeenCalledTimes(6);
+    expect(generateStoryboard).toHaveBeenCalledWith(
       expect.objectContaining({
-        prompt: "Prompt for s1",
-        seconds: 8,
-        outPath: path.join(generationDir(state.id), "s1-take1.mp4"),
+        frames: storyboardOf("s1"),
+        outDir: generationDir(state.id),
+        filePrefix: "s1-take1",
       }),
     );
-    expect(takeOf(stored!, "s2", 2)).toEqual({
-      index: 2,
-      status: "failed",
-      soraVideoId: "video_moderated",
-      file: null,
-      error: "Sora render failed: moderation_blocked",
-    });
     expect(takeOf(stored!, "s1", 1)).toEqual({
       index: 1,
       status: "completed",
-      soraVideoId: "video_s1-take1",
-      file: "s1-take1.mp4",
+      frames: finishedFrames("s1-take1"),
+      costUsd: TAKE_COST,
       error: null,
     });
-    const completed = stored!.scripts
-      .flatMap((entry) => entry.takes)
-      .filter((take) => take.status === "completed");
+    // The frame rendered before the failure stays on disk and is paid for.
+    expect(takeOf(stored!, "s2", 2)).toEqual({
+      index: 2,
+      status: "failed",
+      frames: [
+        { label: "hook", atSecond: 1, file: "s2-take2-f1.jpg" },
+        { label: "product", atSecond: 4, file: null },
+        { label: "reveal", atSecond: 8, file: null },
+      ],
+      costUsd: FRAME_COST,
+      error: "The image API returned no image for frame 2 (product).",
+    });
+    const completed = allTakes(stored!).filter(
+      (take) => take.status === "completed",
+    );
     expect(completed).toHaveLength(5);
+    expect(stored!.actualCostUsd).toBe(5 * TAKE_COST + FRAME_COST);
     expect(
       await readFile(
-        path.join(generationDir(state.id), "s3-take2.mp4"),
+        path.join(generationDir(state.id), "s3-take2-f3.jpg"),
         "utf8",
       ),
-    ).toBe("mp4");
+    ).toBe("jpg");
+  });
+
+  it("fills take frames and the running cost as frames finish", async () => {
+    const snapshots: GenerationState[] = [];
+    const state = await createGeneration({
+      sourceId: SOURCE,
+      briefIndexes: [0],
+      settings: { takesPerScript: 1 },
+    });
+    await executeGeneration(state, (snapshot) => snapshots.push(snapshot));
+
+    const midway = snapshots.find((snapshot) => {
+      const take = takeOf(snapshot, "s1", 1);
+      return take?.status === "running" && take.frames[0].file !== null;
+    });
+    expect(takeOf(midway!, "s1", 1)).toEqual({
+      index: 1,
+      status: "running",
+      frames: [
+        { label: "hook", atSecond: 1, file: "s1-take1-f1.jpg" },
+        { label: "product", atSecond: 4, file: null },
+        { label: "reveal", atSecond: 8, file: null },
+      ],
+      costUsd: FRAME_COST,
+      error: null,
+    });
+    expect(midway!.actualCostUsd).toBe(FRAME_COST);
+
+    const pending = snapshots.find(
+      (snapshot) => takeOf(snapshot, "s1", 1)?.status === "pending",
+    );
+    expect(takeOf(pending!, "s1", 1)).toEqual({
+      index: 1,
+      status: "pending",
+      frames: [
+        { label: "hook", atSecond: 1, file: null },
+        { label: "product", atSecond: 4, file: null },
+        { label: "reveal", atSecond: 8, file: null },
+      ],
+      costUsd: null,
+      error: null,
+    });
+    expect((await readState(state.id))?.actualCostUsd).toBe(TAKE_COST);
+  });
+
+  it("renders at most two takes at a time", async () => {
+    let inFlight = 0;
+    let peak = 0;
+    vi.mocked(generateStoryboard).mockImplementation(async (input) => {
+      inFlight++;
+      peak = Math.max(peak, inFlight);
+      try {
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        return await fakeStoryboard(input);
+      } finally {
+        inFlight--;
+      }
+    });
+    const state = await createGeneration({ sourceId: SOURCE });
+    await executeGeneration(state);
+    expect(generateStoryboard).toHaveBeenCalledTimes(6);
+    expect(peak).toBe(2);
   });
 
   it("fails the job when no take renders, so a dead provider is not reported as completed", async () => {
-    vi.mocked(generateTake).mockRejectedValue(
-      new Error("Sora render failed: moderation_blocked"),
+    vi.mocked(generateStoryboard).mockRejectedValue(
+      new Error("400 Your request was rejected by the safety system."),
     );
     const state = await createGeneration({ sourceId: SOURCE });
     await executeGeneration(state);
@@ -290,33 +433,41 @@ describe("executeGeneration", () => {
     expect(stored).toMatchObject({
       status: "failed",
       stage: "videos",
-      error: "No take rendered: Sora render failed: moderation_blocked",
+      error:
+        "No take rendered: 400 Your request was rejected by the safety system.",
+      actualCostUsd: 0,
     });
-    expect(generateTake).toHaveBeenCalledTimes(6);
-    expect(
-      stored!.scripts.flatMap((entry) => entry.takes.map((t) => t.status)),
-    ).toEqual(Array(6).fill("failed"));
+    expect(generateStoryboard).toHaveBeenCalledTimes(6);
+    expect(allTakes(stored!).map((take) => take.status)).toEqual(
+      Array(6).fill("failed"),
+    );
   });
 
-  it("stops starting takes once Sora reports the key or model unavailable", async () => {
-    vi.mocked(generateTake).mockRejectedValue(
-      new SoraUnavailableError("Sora is unavailable: 403 No access to sora-2."),
-    );
+  it("fails the generation fast once the image API refuses the key or model", async () => {
+    const message =
+      "Image previews are unavailable: 403 No access to gpt-image-2.";
+    vi.mocked(generateStoryboard).mockImplementation(async (input) => {
+      if (input.filePrefix === "s1-take1") return fakeStoryboard(input);
+      throw new PreviewUnavailableError(message);
+    });
     const state = await createGeneration({ sourceId: SOURCE });
     await executeGeneration(state);
 
     const stored = await readState(state.id);
-    // Only the takes already in flight (two at a time) reach Sora.
-    expect(vi.mocked(generateTake).mock.calls.length).toBeLessThanOrEqual(2);
-    expect(stored).toMatchObject({
-      status: "failed",
-      error: "No take rendered: Sora is unavailable: 403 No access to sora-2.",
+    // Only the takes already in flight (two at a time) reach the image API.
+    expect(vi.mocked(generateStoryboard).mock.calls.length).toBeLessThanOrEqual(
+      2,
+    );
+    expect(stored).toMatchObject({ status: "failed", error: message });
+    // A take that finished before the refusal stays pickable.
+    expect(takeOf(stored!, "s1", 1)).toMatchObject({
+      status: "completed",
+      frames: finishedFrames("s1-take1"),
     });
-    for (const take of stored!.scripts.flatMap((entry) => entry.takes)) {
-      expect(take).toMatchObject({
-        status: "failed",
-        error: "Sora is unavailable: 403 No access to sora-2.",
-      });
+    for (const take of allTakes(stored!).filter(
+      (item) => item !== takeOf(stored!, "s1", 1),
+    )) {
+      expect(take).toMatchObject({ status: "failed", error: message });
     }
   });
 
@@ -332,25 +483,92 @@ describe("executeGeneration", () => {
       error: "OpenAI returned 2 scripts for 3 slots.",
       scripts: [],
     });
-    expect(generateTake).not.toHaveBeenCalled();
+    expect(generateStoryboard).not.toHaveBeenCalled();
   });
 
-  it("skips takes whose video file already exists", async () => {
+  it("skips takes whose 3 frame files already exist and re-renders partial ones", async () => {
     const state = await createGeneration({
       sourceId: SOURCE,
       briefIndexes: [0],
     });
-    await mkdir(generationDir(state.id), { recursive: true });
-    await writeFile(path.join(generationDir(state.id), "s1-take1.mp4"), "old");
+    await writeFrames(state.id, "s1-take1", [1, 2, 3]);
+    await writeFrames(state.id, "s1-take2", [1]);
     await executeGeneration(state);
 
-    expect(generateTake).toHaveBeenCalledTimes(1);
+    expect(generateStoryboard).toHaveBeenCalledTimes(1);
+    expect(generateStoryboard).toHaveBeenCalledWith(
+      expect.objectContaining({ filePrefix: "s1-take2" }),
+    );
     const stored = await readState(state.id);
-    expect(takeOf(stored!, "s1", 1)).toMatchObject({
+    expect(takeOf(stored!, "s1", 1)).toEqual({
+      index: 1,
       status: "completed",
-      file: "s1-take1.mp4",
+      frames: finishedFrames("s1-take1"),
+      costUsd: null,
+      error: null,
     });
-    expect(takeOf(stored!, "s1", 2)?.status).toBe("completed");
+    expect(takeOf(stored!, "s1", 2)).toMatchObject({
+      status: "completed",
+      frames: finishedFrames("s1-take2"),
+      costUsd: TAKE_COST,
+    });
+    expect(stored!.actualCostUsd).toBe(TAKE_COST);
+  });
+
+  it("keeps the cost already spent when a generation resumes", async () => {
+    const state = await createGeneration({
+      sourceId: SOURCE,
+      briefIndexes: [0],
+    });
+    const [script] = await fakeScripts(null, [
+      { briefIndex: 0, hairstyle: "sleek low bun" },
+    ]);
+    await writeFrames(state.id, "s1-take1", [1, 2, 3]);
+    await writeFrames(state.id, "s1-take2", [1]);
+    const resumed: GenerationState = {
+      ...state,
+      actualCostUsd: TAKE_COST + FRAME_COST,
+      scripts: [
+        {
+          script,
+          takes: [
+            {
+              index: 1,
+              status: "completed",
+              frames: finishedFrames("s1-take1"),
+              costUsd: TAKE_COST,
+              error: null,
+            },
+            {
+              index: 2,
+              status: "failed",
+              frames: [
+                { label: "hook", atSecond: 1, file: "s1-take2-f1.jpg" },
+                { label: "product", atSecond: 4, file: null },
+                { label: "reveal", atSecond: 8, file: null },
+              ],
+              costUsd: FRAME_COST,
+              error: "The image API returned no image for frame 2 (product).",
+            },
+          ],
+        },
+      ],
+    };
+    await executeGeneration(resumed);
+
+    expect(generateScripts).not.toHaveBeenCalled();
+    expect(generateStoryboard).toHaveBeenCalledTimes(1);
+    const stored = await readState(state.id);
+    expect(stored).toMatchObject({ status: "completed", error: null });
+    expect(takeOf(stored!, "s1", 1)?.costUsd).toBe(TAKE_COST);
+    expect(takeOf(stored!, "s1", 2)).toEqual({
+      index: 2,
+      status: "completed",
+      frames: finishedFrames("s1-take2"),
+      costUsd: FRAME_COST + TAKE_COST,
+      error: null,
+    });
+    expect(stored!.actualCostUsd).toBe(2 * TAKE_COST + FRAME_COST);
   });
 });
 
@@ -365,16 +583,23 @@ describe("liveness", () => {
     expect((await listGenerations())[0].status).toBe("failed");
   });
 
-  it("keeps finished takes playable when the rendering process died", async () => {
+  it("keeps finished takes viewable when the rendering process died", async () => {
     const state = await createGeneration({ sourceId: SOURCE });
     const [entry] = await fakeScripts(null, [
       { briefIndex: 0, hairstyle: "sleek low bun" },
     ]);
-    const take = (index: number, status: "completed" | "running") => ({
+    const take = (index: number, status: "completed" | "running"): Take => ({
       index,
       status,
-      soraVideoId: `video_${index}`,
-      file: status === "completed" ? `s1-take${index}.mp4` : null,
+      frames:
+        status === "completed"
+          ? finishedFrames(`s1-take${index}`)
+          : [
+              { label: "hook", atSecond: 1, file: `s1-take${index}-f1.jpg` },
+              { label: "product", atSecond: 4, file: null },
+              { label: "reveal", atSecond: 8, file: null },
+            ],
+      costUsd: status === "completed" ? TAKE_COST : FRAME_COST,
       error: null,
     });
     await writeJson(stateFile(state.id), {
@@ -392,7 +617,7 @@ describe("liveness", () => {
     expect(stored?.error).toMatch(/server stopped/i);
     expect(takeOf(stored!, "s1", 1)).toMatchObject({
       status: "completed",
-      file: "s1-take1.mp4",
+      frames: finishedFrames("s1-take1"),
     });
     expect(takeOf(stored!, "s1", 2)?.status).toBe("failed");
     // Finished takes can still be picked.
@@ -436,10 +661,10 @@ describe("liveness", () => {
 
 describe("pickTake", () => {
   async function finishedGeneration() {
-    vi.mocked(generateTake).mockImplementation(async (input) => {
-      if (input.outPath.endsWith("s1-take2.mp4"))
-        throw new Error("Sora render failed: failed");
-      return fakeTake(input);
+    vi.mocked(generateStoryboard).mockImplementation(async (input) => {
+      if (input.filePrefix === "s1-take2")
+        throw new Error("The image API returned no image for frame 1 (hook).");
+      return fakeStoryboard(input);
     });
     const state = await createGeneration({ sourceId: SOURCE });
     await executeGeneration(state);
@@ -466,6 +691,19 @@ describe("pickTake", () => {
     expect(await readFile(stateFile(id), "utf8")).toBe(before);
   });
 
+  it("rejects a completed take that lacks any of its 3 frames", async () => {
+    const id = await finishedGeneration();
+    const state = (await readState(id))!;
+    const [first, second] = state.scripts[1].takes;
+    first.frames = first.frames.slice(0, 2);
+    second.frames[2].file = null;
+    await writeJson(stateFile(id), state);
+
+    await expect(pickTake(id, "s2", 1)).rejects.toThrow(/finished take/);
+    await expect(pickTake(id, "s2", 2)).rejects.toThrow(/finished take/);
+    expect((await readState(id))?.picks).toEqual({});
+  });
+
   it("returns null for a generation that does not exist", async () => {
     expect(await pickTake("missing-20261010-000000", "s1", 1)).toBeNull();
     expect(await pickTake("../secrets", "s1", 1)).toBeNull();
@@ -474,9 +712,9 @@ describe("pickTake", () => {
   it("keeps a pick made while other takes are still rendering", async () => {
     let release!: () => void;
     const blocked = new Promise<void>((resolve) => (release = resolve));
-    vi.mocked(generateTake).mockImplementation(async (input) => {
-      if (input.outPath.endsWith("s1-take2.mp4")) await blocked;
-      return fakeTake(input);
+    vi.mocked(generateStoryboard).mockImplementation(async (input) => {
+      if (input.filePrefix === "s1-take2") await blocked;
+      return fakeStoryboard(input);
     });
     const state = await createGeneration({
       sourceId: SOURCE,

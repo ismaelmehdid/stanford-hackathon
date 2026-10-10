@@ -1,11 +1,11 @@
-import { soraPricePerSecondUsd } from "@/lib/generation/config";
+import { imageQuality } from "@/lib/generation/config";
 import { listSources } from "@/lib/generation/sources";
 
-// The browser cannot read SORA_MODEL, so the start form prices takes with the server's value.
-// null means SORA_MODEL has no known price; starting a generation then fails with that error.
-function currentSoraPrice() {
+// The browser cannot read PREVIEW_IMAGE_QUALITY, so the start form prices images with the server's value.
+// null means PREVIEW_IMAGE_QUALITY is not supported; starting a generation then fails with that error.
+function currentImageQuality() {
   try {
-    return soraPricePerSecondUsd();
+    return imageQuality();
   } catch {
     return null;
   }
@@ -14,6 +14,6 @@ function currentSoraPrice() {
 export async function GET() {
   return Response.json({
     sources: await listSources(),
-    soraPricePerSecondUsd: currentSoraPrice(),
+    imageQuality: currentImageQuality(),
   });
 }

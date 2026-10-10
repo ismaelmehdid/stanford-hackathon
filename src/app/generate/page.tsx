@@ -14,8 +14,8 @@ export default function GeneratePage() {
         <p className="text-zinc-600 dark:text-zinc-400">
           Pick an analysis and the replication briefs to use. We write one
           script per hairstyle that keeps the winning format and emotional
-          triggers, render several Sora takes of each, and you pick the best
-          take.
+          triggers, render several takes of each as a 3-frame storyboard that
+          shows how the finished video would look, and you pick the best take.
         </p>
       </div>
       <StartGenerationForm />
