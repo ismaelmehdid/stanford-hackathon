@@ -22,6 +22,10 @@ const STEPS = [
     title: "Explain",
     body: "AI watches the frames, reads the transcript and the comments, then writes what separates winners from the rest.",
   },
+  {
+    title: "Generate",
+    body: "Turn the replication briefs into scripts, render storyboard previews of each, and pick the best take.",
+  },
 ];
 
 const TIER_RULES = {
@@ -46,12 +50,18 @@ export default function Home() {
           <div className="flex animate-rise flex-col gap-8 [animation-delay:200ms] lg:flex-row lg:items-end lg:justify-between">
             <p className="max-w-xl text-lg text-muted">
               Paste a brand&apos;s Instagram page. Get every influencer video
-              tiered, the reasons the best ones work, and briefs to make more of
-              them.
+              tiered, the reasons the best ones work, and storyboard previews of
+              new videos built from them.
             </p>
             <div className="flex flex-wrap gap-3">
               <Link href="/analyze" className={`${buttonPrimary} px-7 py-3.5`}>
                 Start an analysis →
+              </Link>
+              <Link
+                href="/generate"
+                className={`${buttonSecondary} px-7 py-3.5`}
+              >
+                Generate videos
               </Link>
               <a href="#how" className={`${buttonSecondary} px-7 py-3.5`}>
                 How it works
@@ -70,7 +80,7 @@ export default function Home() {
           title="How it works"
           description="One run takes 5–15 minutes and is cached, so re-running a brand is fast."
         />
-        <ol className="grid grid-cols-1 gap-px overflow-hidden rounded-3xl border border-line bg-line md:grid-cols-3">
+        <ol className="grid grid-cols-1 gap-px overflow-hidden rounded-3xl border border-line bg-line md:grid-cols-2 lg:grid-cols-4">
           {STEPS.map((step, index) => (
             <li
               key={step.title}

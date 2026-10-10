@@ -11,7 +11,7 @@ export function SiteHeader() {
           >
             <span className="size-2 rounded-full bg-foreground" />
           </span>
-          <span className="font-mono text-[11px] tracking-[0.14em] whitespace-nowrap uppercase sm:text-xs sm:tracking-[0.2em]">
+          <span className="font-mono text-[11px] tracking-[0.14em] whitespace-nowrap uppercase max-[480px]:sr-only sm:text-xs sm:tracking-[0.2em]">
             Stanford Hackathon
           </span>
         </Link>
@@ -21,6 +21,12 @@ export function SiteHeader() {
             className="rounded-full px-2 py-1.5 text-muted transition-colors hover:text-foreground sm:px-3"
           >
             Analyze
+          </Link>
+          <Link
+            href="/generate"
+            className="rounded-full px-2 py-1.5 text-muted transition-colors hover:text-foreground sm:px-3"
+          >
+            Generate
           </Link>
           <Link
             href="/analyze#runs"

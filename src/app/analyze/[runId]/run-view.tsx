@@ -201,6 +201,11 @@ function ReportHeader({
               Download JSON for video generation ↓
             </a>
           )}
+          {analysis?.conclusions?.replicationBriefs.length ? (
+            <Link href="/generate" className={buttonSecondary}>
+              Generate videos →
+            </Link>
+          ) : null}
           {analysis && (
             <button
               type="button"
