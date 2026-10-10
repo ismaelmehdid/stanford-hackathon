@@ -242,3 +242,26 @@ Tests (`config.test.ts`): defaults on empty/invalid input; caps lower but never 
 - Integrator: `pnpm format && pnpm lint && pnpm typecheck && pnpm test && pnpm build`, dev-server smoke tests (sources list, 400 on over-cap POST, 404 on traversal), never a valid paid POST.
 - Two reviewers (correctness, robustness), fixer.
 - Lead: commit, then a real Starter generation from `/generate` on the sample (≈ $4.80), check takes play and a pick saves, push to `main`.
+
+---
+
+## Addendum (2026-10-10): image previews instead of Sora video
+
+OpenAI shut down the Sora API on 2026-09-24 (`GET /v1/models/sora-2` reports `"shutdown_date": "2026-09-24"`; `/v1/videos` returns 404). Approved change: each take becomes a **3-frame storyboard preview** rendered with `gpt-image-2`, showing how the finished video would look.
+
+### Behavior
+
+- Script writer (gpt-5.5) adds `storyboard`: exactly 3 frames in order — `hook` (within the first 3 s), `product` (middle), `reveal` (last second, the new hairstyle). Each frame has `atSecond` and a self-contained `imagePrompt`: photographic vertical 9:16 frame, the same fictional adult (age range, hair type, wardrobe) and the same setting/lighting in all three, generic product (no logos, brand names or readable label text), no text overlays, no medical claims. `soraPrompt` is renamed `videoPrompt` (kept for a future video model).
+- A take renders frame 1 with `client.images.generate`, then frames 2–3 with `client.images.edit` using frame 1 as the reference image ("Same person, same setting and lighting as the reference image. …"), so the storyboard stays consistent. Size `1024x1536`, quality from `PREVIEW_IMAGE_QUALITY` (`low` | `medium` | `high`, default `medium`), model from `PREVIEW_IMAGE_MODEL` (default `gpt-image-2`), `output_format: "jpeg"`. Files: `<generationDir>/s<N>-take<K>-f<1|2|3>.jpg`, written atomically.
+- Real cost per take is computed from each response's `usage` with token prices per 1M: text input $5, image input $8, image output $30. The pre-run estimate uses $0.004 / $0.035 / $0.13 per image for low / medium / high.
+- Cap: at most 60 images per generation (scripts × takes × 3), rejected before any paid call with `This would create N images (≈ $X). The limit is 60.`
+- Takes render 2 at a time (default account limit is about 20 images per minute). A 401/403/404 from the image API fails the generation fast; other errors fail only that take; a generation where no take completes is `failed`.
+- Review page shows each take as a row of 3 frames labeled "Hook · 0 s", "Product · 4 s", "Reveal · 8 s"; clicking a frame opens it full size. Picks work as before; the picks JSON lists each picked take's frame files.
+
+### Interfaces
+
+- `config.ts`: keep `VIDEO_SECONDS`, `VideoLength`, `GenerationSettings`, `DEFAULT_GENERATION_SETTINGS`, `clampGenerationSettings`. Replace Sora exports with `IMAGE_SIZE = "1024x1536"`, `FRAMES_PER_TAKE = 3`, `GENERATION_LIMITS = { hairstylesPerBrief: 5, takesPerScript: 3, totalImages: 60 }`, `imageModel()`, `imageQuality(): "low" | "medium" | "high"`, `ESTIMATED_IMAGE_COST_USD`, `totalImages(scriptCount, settings)`, `estimatePreviewCostUsd(scriptCount, settings, quality?)` (rounded to cents), `imageUsageCostUsd(usage)`.
+- `schema.ts`: `StoryboardFrameSchema = { label: "hook" | "product" | "reveal", atSecond: number, imagePrompt: string }`; `VideoScriptSchema` gets `storyboard` and `videoPrompt` (replaces `soraPrompt`); `Take = { index, status, frames: { label, atSecond, file }[], costUsd: number | null, error }`; `GenerationState` gets `actualCostUsd: number`.
+- `previews.ts` (replaces `sora.ts`): `class PreviewUnavailableError`, `generateStoryboard({ frames, outDir, filePrefix, onFrame? }): Promise<{ frames: { label, atSecond, file }[]; costUsd: number }>`.
+- `generations.ts`: `isValidImageFile(file)` (`/^s\d{1,3}-take\d-f[1-3]\.jpg$/`) replaces `isValidVideoFile`; uses `generateStoryboard`; resumes by skipping takes whose 3 files exist.
+- Routes: `GET /api/generations/[generationId]/images/[file]` (`image/jpeg`) replaces the `videos/[file]` route.
