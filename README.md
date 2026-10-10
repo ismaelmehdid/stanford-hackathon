@@ -4,7 +4,7 @@ Next.js 16 (App Router) + React 19 + TypeScript + Tailwind CSS 4, managed with p
 
 ## Prerequisites
 
-- Node.js 24 (see `.nvmrc`; anything `>=20.9` works). With nvm: `nvm use`.
+- Node.js 24 (see `.nvmrc`; anything `>=22` works). With nvm: `nvm use`.
 - pnpm 11. Easiest via Corepack, which reads the pinned version from `package.json`:
 
   ```bash
@@ -64,3 +64,21 @@ Import from `src/` with the `@/` alias, e.g. `import { Button } from "@/componen
 - `cacheComponents` and `partialPrefetching` are enabled in `next.config.ts`. Data fetching and caching work differently from older Next.js versions. Read the docs before adding data fetching.
 - Version-matched docs ship in `node_modules/next/dist/docs/`. `AGENTS.md` (and `CLAUDE.md`, which imports it) point coding agents there.
 - `pnpm-workspace.yaml` keeps install scripts for `sharp` and `unrs-resolver` disabled, the create-next-app default. Prebuilt binaries cover normal use.
+
+## Part 1 — Influencer video analysis
+
+Finds a hair care brand's influencer videos on Instagram, tiers them, and analyzes why they work.
+
+1. Add `APIFY_TOKEN` and `OPENAI_API_KEY` to `.env`.
+2. Run `pnpm dev`, open http://localhost:3000/analyze, paste a brand URL, and start.
+   Or from the terminal: `pnpm analyze https://www.instagram.com/headandshoulders --creators 5`.
+
+Each influencer video is compared with the median of the brand page's and the creator's other videos (views, likes, comments):
+
+- **Amplify**: beats both pages.
+- **Observe**: beats one page.
+- **Stop**: beats neither.
+
+Output for Part 2: `.data/runs/<runId>/analysis.json`, also downloadable from the run page. Its shape is `BrandAnalysisSchema` in `src/lib/analysis/schema.ts`. `conclusions.replicationBriefs` is the input for script generation.
+
+Everything is cached in `.data/` (git-ignored), so re-running a brand reuses finished scrapes and AI calls. Design: `docs/superpowers/specs/2026-10-10-video-analysis-design.md`.
