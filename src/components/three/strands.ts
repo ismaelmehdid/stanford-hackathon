@@ -9,11 +9,9 @@ export type StrandsOptions = {
 };
 
 // Every strand is a polyline whose shape is computed on the GPU: a flowing, fanning
-// lock of hair that curls around its path, sways over time and parts around the pointer.
+// lock of hair that curls around its path and sways over time.
 const strandVertexShader = /* glsl */ `
   uniform float uTime;
-  uniform vec2 uPointer;
-  uniform float uPointerStrength;
   attribute vec4 aSeed;
   varying float vAlpha;
 
@@ -33,13 +31,7 @@ const strandVertexShader = /* glsl */ `
     z += sin(angle) * curlRadius;
     y += sin(t * 6.0 - time * 1.1 + aSeed.x * 3.0) * 0.16 * t;
 
-    vec3 p = vec3(x, y, z);
-    vec2 away = p.xy - uPointer;
-    float pull = exp(-dot(away, away) / 2.4) * uPointerStrength;
-    p.xy += normalize(away + 1e-4) * pull * 0.9;
-    p.z += pull * 0.7;
-
-    vec4 viewPosition = modelViewMatrix * vec4(p, 1.0);
+    vec4 viewPosition = modelViewMatrix * vec4(x, y, z, 1.0);
     gl_Position = projectionMatrix * viewPosition;
 
     float ends = smoothstep(0.0, 0.08, t) * (1.0 - smoothstep(0.78, 1.0, t));
@@ -142,8 +134,6 @@ export function mountStrands(
 
   const strandUniforms = {
     uTime: { value: 0 },
-    uPointer: { value: new THREE.Vector2(99, 99) },
-    uPointerStrength: { value: 0 },
     uOpacity: { value: (small ? 0.5 : 0.36) * intensity },
   };
   const strands = new THREE.LineSegments(
@@ -187,64 +177,16 @@ export function mountStrands(
     camera.position.z = width / height < 1 ? 17 : 11;
   });
 
-  // Pointer position projected onto the lock's local plane.
-  const pointerNdc = new THREE.Vector2();
-  let pointerInside = false;
-  const raycaster = new THREE.Raycaster();
-  const plane = new THREE.Plane(new THREE.Vector3(0, 0, 1), 0);
-  const hit = new THREE.Vector3();
-  const onPointerMove = (event: PointerEvent) => {
-    const rect = container.getBoundingClientRect();
-    pointerNdc.set(
-      ((event.clientX - rect.left) / rect.width) * 2 - 1,
-      -((event.clientY - rect.top) / rect.height) * 2 + 1,
-    );
-    pointerInside =
-      event.pointerType === "mouse" &&
-      Math.abs(pointerNdc.x) <= 1 &&
-      Math.abs(pointerNdc.y) <= 1;
-  };
-  // `relatedTarget` is null when the pointer leaves the window.
-  const onPointerOut = (event: PointerEvent) => {
-    if (!event.relatedTarget) pointerInside = false;
-  };
-  window.addEventListener("pointermove", onPointerMove, { passive: true });
-  window.addEventListener("pointerout", onPointerOut);
-
   if (stage.reducedMotion) {
     strandUniforms.uTime.value = 4;
     dustUniforms.uTime.value = 4;
     stage.onResize(() => stage.render());
   } else {
-    const parallax = new THREE.Vector2();
-    const center = new THREE.Vector2();
-    stage.start((elapsed, delta) => {
+    stage.start((elapsed) => {
       strandUniforms.uTime.value = elapsed;
       dustUniforms.uTime.value = elapsed;
-
-      const ease = 1 - Math.exp(-delta * 3);
-      strandUniforms.uPointerStrength.value +=
-        ((pointerInside ? 1 : 0) - strandUniforms.uPointerStrength.value) *
-        ease;
-      if (pointerInside) {
-        raycaster.setFromCamera(pointerNdc, camera);
-        plane.normal.set(0, 0, 1).applyQuaternion(lock.quaternion);
-        if (raycaster.ray.intersectPlane(plane, hit)) {
-          lock.worldToLocal(hit);
-          strandUniforms.uPointer.value.set(hit.x, hit.y);
-        }
-      }
-
-      parallax.lerp(pointerInside ? pointerNdc : center, ease);
-      camera.position.x = parallax.x * 0.6;
-      camera.position.y = parallax.y * 0.4;
-      camera.lookAt(0, 0, 0);
     });
   }
 
-  return () => {
-    window.removeEventListener("pointermove", onPointerMove);
-    window.removeEventListener("pointerout", onPointerOut);
-    stage.dispose();
-  };
+  return () => stage.dispose();
 }
