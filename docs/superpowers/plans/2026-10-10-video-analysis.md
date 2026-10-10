@@ -1302,13 +1302,11 @@ describe("runInstagramScraper", () => {
     // A fresh Response per call: a body can only be read once.
     vi.stubGlobal(
       "fetch",
-      vi
-        .fn()
-        .mockImplementation(async () =>
-          json({
-            data: { id: "run2", status: "FAILED", defaultDatasetId: "ds2" },
-          }),
-        ),
+      vi.fn().mockImplementation(async () =>
+        json({
+          data: { id: "run2", status: "FAILED", defaultDatasetId: "ds2" },
+        }),
+      ),
     );
     await expect(runInstagramScraper({ q: 1 }, 1)).rejects.toThrow(
       "ended with status FAILED",
