@@ -126,6 +126,8 @@ describe("generateScripts", () => {
     expect(instructions).toContain("exactly 3 frames");
     expect(instructions).toMatch(/hook[\s\S]*product[\s\S]*reveal/);
     expect(instructions).toContain("9:16");
+    expect(instructions).toContain("Instagram Reel, not a brand ad");
+    expect(instructions).toMatch(/front camera/);
     expect(instructions).toContain("same fictional adult");
     expect(instructions).toMatch(/no logos/i);
     expect(instructions).toMatch(/no text overlays/i);
