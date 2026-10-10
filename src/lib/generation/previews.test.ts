@@ -20,6 +20,8 @@ vi.mock("openai", async (importOriginal) => {
 const { checkPreviewAvailable, generateStoryboard, PreviewUnavailableError } =
   await import("./previews");
 
+const CREATOR_STYLE_RULE =
+  "Style: a candid still from an influencer's own vertical smartphone video for Instagram Reels, filmed by the creator with the front camera at arm's length or the phone propped on the counter, eye level, in a real lived-in home with everyday clutter, lit by window light, bathroom lights or a ring light, with natural skin texture, a slight handheld tilt, imperfect framing, light motion blur and phone-camera grain. Not a studio photo, not a professional photo shoot, not a commercial ad, no retouching.";
 const NO_TEXT_RULE =
   "No text, captions, watermarks, logos, brand names or readable label text anywhere in the image; any product packaging is plain or carries only abstract shapes.";
 const REQUEST_OPTIONS = { maxRetries: 0, timeout: 290_000 };
@@ -114,7 +116,7 @@ describe("generateStoryboard", () => {
     expect(generate).toHaveBeenCalledWith(
       {
         model: "gpt-image-2",
-        prompt: `Hook prompt. ${NO_TEXT_RULE}`,
+        prompt: `Hook prompt. ${CREATOR_STYLE_RULE} ${NO_TEXT_RULE}`,
         size: "1024x1536",
         quality: "medium",
         output_format: "jpeg",
@@ -127,7 +129,7 @@ describe("generateStoryboard", () => {
       const [body, options] = call;
       expect(body).toMatchObject({
         model: "gpt-image-2",
-        prompt: `Same person, same setting and lighting as the reference image. ${frames[index + 1].imagePrompt} ${NO_TEXT_RULE}`,
+        prompt: `Same person, same setting and lighting as the reference image. ${frames[index + 1].imagePrompt} ${CREATOR_STYLE_RULE} ${NO_TEXT_RULE}`,
         size: "1024x1536",
         quality: "medium",
         output_format: "jpeg",

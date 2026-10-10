@@ -30,6 +30,9 @@ const DEFAULT_RATE_LIMIT_WAIT_MS = 60_000;
 const MAX_RATE_LIMIT_WAIT_MS = 120_000;
 const REFERENCE_PREFIX =
   "Same person, same setting and lighting as the reference image. ";
+// Appended to every prompt so frames read as stills from a creator's own Reel, even when a script's prompt drifts toward a polished ad.
+const CREATOR_STYLE_RULE =
+  "Style: a candid still from an influencer's own vertical smartphone video for Instagram Reels, filmed by the creator with the front camera at arm's length or the phone propped on the counter, eye level, in a real lived-in home with everyday clutter, lit by window light, bathroom lights or a ring light, with natural skin texture, a slight handheld tilt, imperfect framing, light motion blur and phone-camera grain. Not a studio photo, not a professional photo shoot, not a commercial ad, no retouching.";
 // Appended to every prompt, so the no-text rule holds even when a script's prompt does not repeat it.
 const NO_TEXT_RULE =
   "No text, captions, watermarks, logos, brand names or readable label text anywhere in the image; any product packaging is plain or carries only abstract shapes.";
@@ -94,7 +97,10 @@ export async function generateStoryboard(input: {
     const response = await callImageApi(frameName, () =>
       reference === undefined
         ? images.generate(
-            { ...common, prompt: `${frame.imagePrompt} ${NO_TEXT_RULE}` },
+            {
+              ...common,
+              prompt: `${frame.imagePrompt} ${CREATOR_STYLE_RULE} ${NO_TEXT_RULE}`,
+            },
             REQUEST_OPTIONS,
           )
         : toFile(reference, "reference.jpg", { type: "image/jpeg" }).then(
@@ -103,7 +109,7 @@ export async function generateStoryboard(input: {
                 {
                   ...common,
                   image,
-                  prompt: `${REFERENCE_PREFIX}${frame.imagePrompt} ${NO_TEXT_RULE}`,
+                  prompt: `${REFERENCE_PREFIX}${frame.imagePrompt} ${CREATOR_STYLE_RULE} ${NO_TEXT_RULE}`,
                 },
                 REQUEST_OPTIONS,
               ),
