@@ -20,7 +20,7 @@ Success: one run on a real brand completes end to end, the page shows tiers, per
 
 - **Brand page**: the Instagram profile the user pastes.
 - **Influencer video**: a video on the brand page that is either
-  - a **collab** post: `coauthorProducers` contains a user other than the brand (the same post appears on both profiles with shared metrics), or
+  - a **collab** post: the post owner (`ownerUsername`) is not the brand (Instagram lists collab posts on the brand page with the creator as owner and the brand in `coauthorProducers`), or the brand owns it and `coauthorProducers` contains another user. Creator = the owner, or the first non-brand co-author. The same post appears on both profiles with shared metrics.
   - a **credited** post: no co-author, but a creator is credited via `taggedUsers`, `sponsors`, or a caption credit (`🎥 @name`, `📹 @name`, `via @name`, `by @name`, `credit: @name`, `cc @name`). First match in that order wins. The brand's own handle is never a creator.
 - **Metrics** of a video: `views` (`videoPlayCount ?? videoViewCount`), `likes` (`likesCount`, ignored when `-1` = hidden), `comments` (`commentsCount`). A credited post uses the brand post's own metrics for both comparisons.
 - **Baseline** of a page for video `v`: the median of each metric over that page's other videos (videos only, `v` excluded). Brand baseline includes other influencer videos.
@@ -41,7 +41,7 @@ Pure TypeScript module under `src/lib/analysis/`, callable from the background j
 2. **detectInfluencerVideos**: apply the definition in §2 to each brand video.
 3. **scrapeInfluencers**: unique creators, capped at `maxCreators` (default 25, ordered by number of brand videos they appear in, then most recent). One Apify run, all profile URLs as `directUrls`, `resultsLimit: creatorPostLimit` (default 50). Keep videos.
 4. **scoreVideos**: compute baselines, page scores, tiers, ranks (§2).
-5. **fetchComments**: one Apify run with `resultsType: "comments"` over all tiered videos (`directUrls` = post URLs), up to 15 newest per video (free plan limit).
+5. **collectComments**: use the `latestComments` array (up to 15 per post) that the posts feed already returns. No extra Apify run. Verified on `headandshoulders`: 15 comments for a post with 40.
 6. **analyzeVideo** (per tiered video, concurrency 4):
    1. download the mp4 from `videoUrl` (Instagram CDN links expire, so this happens during the run);
    2. select frames: scene changes (ffmpeg `select='gt(scene,0.3)'`), plus hook frames at 0.0 s, 1.0 s, 2.0 s, plus the last frame; deduplicate frames closer than 0.5 s; cap at 24 by keeping hook and last frames and sampling the rest evenly;
@@ -55,7 +55,7 @@ Failure of one video in stages 6–7 marks that video `failed` with the error an
 
 ## 4. AI outputs (Zod schemas in `src/lib/analysis/schema.ts`)
 
-All calls use OpenAI structured outputs with these schemas. Models come from env (`OPENAI_VISION_MODEL`, `OPENAI_TRANSCRIBE_MODEL`); defaults are set from OpenAI's current docs at implementation time.
+All calls use OpenAI structured outputs with these schemas. Models come from env (`OPENAI_VISION_MODEL`, default `gpt-5.5`; `OPENAI_TRANSCRIBE_MODEL`, default `gpt-4o-transcribe`).
 
 ### VideoAnalysis
 
@@ -128,13 +128,13 @@ Requires a long-running Node server (`pnpm dev` or `pnpm build && pnpm start`). 
 - Env: `APIFY_TOKEN`, `OPENAI_API_KEY` (both required; run fails fast when missing), optional `OPENAI_VISION_MODEL`, `OPENAI_TRANSCRIBE_MODEL`.
 - Hard caps (UI may lower, never raise): `brandPostLimit ≤ 100`, `maxCreators ≤ 25`, `creatorPostLimit ≤ 50`, comments ≤ 15 per video.
 - Every Apify run sets `maxItems` and `maxTotalChargeUsd` from its expected result count × $0.0027 + $0.05.
-- Expected cost per brand at default caps: Apify ≈ $3–6, OpenAI ≈ $2–5. The UI shows the Apify estimate before starting.
+- Expected cost per brand at default caps: Apify ≈ $3–4, OpenAI ≈ $2–5. The UI shows the Apify estimate before starting.
 - ffmpeg comes from the `ffmpeg-static` package; `FFMPEG_PATH` overrides it.
 
 ## 9. Testing
 
 - Vitest unit tests (no network): scoring and tiering, influencer detection and caption credit parsing, frame timestamp selection, Apify item normalization, schema validation.
-- Fixtures: one small real run (5 creators, cost < $1) recorded under `src/lib/analysis/__fixtures__/`.
+- Fixtures: real `headandshoulders` feed items recorded under `src/lib/analysis/__fixtures__/`. Test brand for the first real run: https://www.instagram.com/headandshoulders
 - CI adds `pnpm test`.
 
 ## 10. Out of scope
