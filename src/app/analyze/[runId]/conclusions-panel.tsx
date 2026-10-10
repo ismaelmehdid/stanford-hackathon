@@ -67,6 +67,11 @@ export function ConclusionsPanel({
               key={`${index}-${brief.hook}`}
               className="rounded-lg border border-zinc-200 p-4 text-sm dark:border-zinc-800"
             >
+              {brief.basedOnTier === "observe" && (
+                <p className="mb-1 text-xs font-medium text-amber-700 dark:text-amber-400">
+                  No Amplify videos yet: based on the strongest Observe videos
+                </p>
+              )}
               <p className="font-medium">
                 {brief.format.replace(/_/g, " ")} — {brief.hook}
               </p>

@@ -114,6 +114,9 @@ export const ConclusionsSchema = z.object({
   }),
   replicationBriefs: z.array(
     z.object({
+      basedOnTier: z
+        .enum(["amplify", "observe"])
+        .describe("observe only when the brand has no amplify videos"),
       sourceVideoIds: z.array(z.string()),
       format: z.enum(VIDEO_TYPES),
       hook: z.string(),
