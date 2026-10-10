@@ -2,6 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useState, type FormEvent } from "react";
+import { buttonPrimary } from "@/components/ui";
 import {
   estimateApifyCostUsd,
   MAX_SETTINGS,
@@ -11,11 +12,11 @@ import {
 const FIELDS: { key: keyof RunSettings; label: string }[] = [
   { key: "brandPostLimit", label: "Brand posts" },
   { key: "maxCreators", label: "Creators" },
-  { key: "creatorPostLimit", label: "Posts per creator" },
+  { key: "creatorPostLimit", label: "Per creator" },
 ];
 
-const inputClass =
-  "rounded-md border border-zinc-300 px-3 py-2 font-normal dark:border-zinc-700 dark:bg-zinc-900";
+const labelClass =
+  "font-mono text-[10px] tracking-[0.2em] text-muted uppercase";
 
 export function StartRunForm() {
   const router = useRouter();
@@ -52,21 +53,22 @@ export function StartRunForm() {
   return (
     <form
       onSubmit={handleSubmit}
-      className="flex flex-col gap-4 rounded-xl border border-zinc-200 p-4 sm:p-6 dark:border-zinc-800"
+      className="flex animate-rise flex-col gap-8 rounded-3xl border border-line-strong bg-background/60 p-6 backdrop-blur-xl [animation-delay:150ms] sm:p-8"
     >
-      <label className="flex flex-col gap-1 text-sm font-medium">
-        Brand Instagram URL
+      <label className="flex flex-col gap-2">
+        <span className={labelClass}>Brand Instagram URL</span>
         <input
           required
           value={brandUrl}
           onChange={(event) => setBrandUrl(event.target.value)}
-          className={`${inputClass} min-w-0`}
+          className="min-w-0 border-b border-line-strong bg-transparent py-2 text-xl outline-none placeholder:text-subtle focus:border-foreground"
+          placeholder="https://www.instagram.com/brand"
         />
       </label>
-      <div className="flex flex-wrap gap-4">
+      <div className="grid grid-cols-3 gap-4">
         {FIELDS.map(({ key, label }) => (
-          <label key={key} className="flex flex-col gap-1 text-sm font-medium">
-            {label} (max {MAX_SETTINGS[key]})
+          <label key={key} className="flex min-w-0 flex-col gap-2">
+            <span className={labelClass}>{label}</span>
             <input
               type="number"
               min={1}
@@ -75,26 +77,35 @@ export function StartRunForm() {
               onChange={(event) =>
                 setSettings({ ...settings, [key]: Number(event.target.value) })
               }
-              className={`${inputClass} w-32`}
+              className="w-full min-w-0 border-b border-line-strong bg-transparent py-2 font-mono text-xl tabular-nums outline-none focus:border-foreground"
             />
+            <span className="font-mono text-[10px] text-subtle">
+              max {MAX_SETTINGS[key]}
+            </span>
           </label>
         ))}
       </div>
-      <div className="flex flex-wrap items-center gap-4">
+      <div className="flex flex-col gap-3">
         <button
           type="submit"
           disabled={submitting}
-          className="rounded-md bg-foreground px-4 py-2 font-medium text-background disabled:opacity-50"
+          className={`${buttonPrimary} w-full py-3.5 text-base`}
         >
-          {submitting ? "Starting…" : "Start analysis"}
+          {submitting ? "Starting…" : "Start analysis →"}
         </button>
-        <p className="text-sm text-zinc-500">
-          Apify cost up to ${estimateApifyCostUsd(settings).toFixed(2)}, plus
-          OpenAI usage. Takes 5–15 minutes.
+        <p className="text-center font-mono text-[11px] text-muted">
+          Apify up to ${estimateApifyCostUsd(settings).toFixed(2)} + OpenAI
+          usage · 5–15 minutes
         </p>
       </div>
       {error && (
-        <p className="text-sm text-red-600 dark:text-red-400">{error}</p>
+        <p
+          role="alert"
+          className="rounded-xl border border-line-strong px-4 py-3 text-sm"
+        >
+          <span className="mr-2 font-mono text-[11px]">✕</span>
+          {error}
+        </p>
       )}
     </form>
   );

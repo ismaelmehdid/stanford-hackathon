@@ -38,9 +38,12 @@ Open http://localhost:3000.
 ```
 src/
   app/          # Routes, layouts, and route handlers (App Router)
-  components/   # Shared UI components (create as needed)
+  components/   # Shared UI components
+    three/      # three.js scenes (hero hair strands, report performance chart)
   lib/          # Shared utilities, clients, and helpers (create as needed)
 ```
+
+The UI is black and white only: tiers are told apart by fill (Amplify solid, Observe hatched, Stop outlined), not color. Colors live as tokens in `src/app/globals.css`, which also flips reports to black on white when printed. The three.js scenes load after the page, pause when off screen, and respect reduced motion.
 
 Import from `src/` with the `@/` alias, e.g. `import { Button } from "@/components/button"`.
 

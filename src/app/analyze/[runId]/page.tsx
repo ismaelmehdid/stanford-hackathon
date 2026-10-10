@@ -1,5 +1,5 @@
 import { Suspense } from "react";
-import { RunView } from "./run-view";
+import { RunView, RunViewSkeleton } from "./run-view";
 
 async function RunViewLoader({
   params,
@@ -12,8 +12,8 @@ async function RunViewLoader({
 
 export default function RunPage({ params }: PageProps<"/analyze/[runId]">) {
   return (
-    <main className="mx-auto flex w-full max-w-6xl flex-col gap-8 px-4 py-10 sm:px-6 sm:py-12">
-      <Suspense fallback={<p className="text-zinc-500">Loading run…</p>}>
+    <main className="flex w-full flex-1 flex-col">
+      <Suspense fallback={<RunViewSkeleton />}>
         <RunViewLoader params={params} />
       </Suspense>
     </main>
