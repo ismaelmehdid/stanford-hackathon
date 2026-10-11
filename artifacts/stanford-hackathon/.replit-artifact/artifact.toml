@@ -1,0 +1,28 @@
+kind = "web"
+previewPath = "/"
+title = "GrowthOS"
+description = "GitHub for marketing: campaign repositories, reusable briefs, version history, review approvals, and channel pipelines in one workspace."
+version = "1.0.0"
+id = "artifacts/stanford-hackathon"
+router = "path"
+
+[[services]]
+name = "web"
+paths = [ "/" ]
+localPort = 25755
+
+[services.development]
+run = "pnpm --filter @workspace/stanford-hackathon run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/stanford-hackathon", "run", "build" ]
+serve = "static"
+publicDir = "artifacts/stanford-hackathon/dist/public"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
+
+[services.env]
+PORT = "25755"
+BASE_PATH = "/"

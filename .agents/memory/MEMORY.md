@@ -1,0 +1,5 @@
+- [GrowthOS product direction](growthos-product-direction.md) — GitHub for marketing; prioritize reusable, traceable marketing workflows rather than a standalone content generator.
+- [pnpm version settings](pnpm-version-settings.md) — pnpm 11 automation needs workspace YAML settings; .npmrc-only fixes can leave implicit reinstalls and build approvals unchanged.
+- [GitHub authentication flow](github-auth-flow.md) — Git-provider auth can differ from integration status; verify pushes and use Git Providers settings when generic reconnect fails.
+- [GitHub sync safety](github-sync-safety.md) — verify checkout identity after automated merges and preserve newer remote features when syncing divergent histories.
+- [Dependency audit scope](dependency-audit-scope.md) — security scans include archived lockfiles even when their directories are excluded from deployment.

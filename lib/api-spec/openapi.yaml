@@ -1,0 +1,465 @@
+openapi: 3.1.0
+info:
+  title: Api
+  version: 0.1.0
+  description: GrowthOS marketing campaign pipelines, reviews, and version history
+servers:
+  - url: /api
+tags:
+  - name: health
+  - name: growth
+paths:
+  /analytics:
+    get:
+      operationId: getGrowthAnalytics
+      tags: [growth]
+      summary: Budget planning and workflow analytics, distinct from unconnected performance data
+      parameters:
+        - in: query
+          name: days
+          schema: { type: integer, enum: [7, 30, 90], default: 30 }
+        - in: query
+          name: channel
+          schema: { type: string, enum: [Paid, Content, Social, Email, SEO, Brand] }
+      responses:
+        "200":
+          description: Current budget snapshot and activity in the selected period
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/GrowthAnalytics" }
+  /budget-plans:
+    get:
+      operationId: getBudgetPlans
+      tags: [growth]
+      summary: List saved allocation drafts; these do not change campaigns or ad budgets
+      responses:
+        "200":
+          description: Saved budget plans, newest first
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/BudgetPlan" }
+    post:
+      operationId: createBudgetPlan
+      tags: [growth]
+      summary: Save a balanced allocation draft without applying it to marketing tools
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/BudgetPlanInput" }
+      responses:
+        "201":
+          description: Saved allocation draft
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BudgetPlan" }
+        "400":
+          description: Invalid or unbalanced allocation
+  /healthz:
+    get:
+      operationId: healthCheck
+      tags: [health]
+      summary: Health check
+      responses:
+        "200":
+          description: Healthy
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthStatus"
+  /dashboard:
+    get:
+      operationId: getDashboard
+      tags: [growth]
+      summary: Get pipeline overview
+      responses:
+        "200":
+          description: Current campaign and pipeline metrics
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Dashboard"
+  /activity:
+    get:
+      operationId: getActivity
+      tags: [growth]
+      summary: Get recent team activity
+      responses:
+        "200":
+          description: Recent campaign activity
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Activity"
+  /campaigns:
+    get:
+      operationId: getCampaigns
+      tags: [growth]
+      summary: List and filter campaigns
+      parameters:
+        - in: query
+          name: status
+          schema:
+            type: string
+        - in: query
+          name: q
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Campaigns
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Campaign"
+    post:
+      operationId: createCampaign
+      tags: [growth]
+      summary: Create a campaign
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CampaignInput"
+      responses:
+        "201":
+          description: Created campaign
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Campaign"
+  /campaigns/{id}:
+    get:
+      operationId: getCampaign
+      tags: [growth]
+      summary: Get a campaign
+      parameters:
+        - $ref: "#/components/parameters/CampaignId"
+      responses:
+        "200":
+          description: Campaign
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Campaign"
+        "404":
+          description: Campaign not found
+    patch:
+      operationId: updateCampaign
+      tags: [growth]
+      summary: Update a campaign and record its version
+      parameters:
+        - $ref: "#/components/parameters/CampaignId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CampaignUpdate"
+      responses:
+        "200":
+          description: Updated campaign
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Campaign"
+        "404":
+          description: Campaign not found
+        "409":
+          description: Campaign changed since the editor loaded
+  /campaigns/{id}/versions:
+    get:
+      operationId: getCampaignVersions
+      tags: [growth]
+      summary: List campaign history
+      parameters:
+        - $ref: "#/components/parameters/CampaignId"
+      responses:
+        "200":
+          description: Version history
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/CampaignVersion"
+  /campaigns/{id}/submit:
+    post:
+      operationId: submitCampaign
+      tags: [growth]
+      summary: Submit a campaign for review
+      parameters:
+        - $ref: "#/components/parameters/CampaignId"
+      responses:
+        "200":
+          description: Campaign submitted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Campaign"
+        "404":
+          description: Campaign not found
+        "409":
+          description: Campaign cannot be submitted from its current stage
+  /campaigns/{id}/review:
+    post:
+      operationId: reviewCampaign
+      tags: [growth]
+      summary: Approve or request changes to a campaign
+      parameters:
+        - $ref: "#/components/parameters/CampaignId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ReviewInput"
+      responses:
+        "200":
+          description: Review recorded
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Campaign"
+        "409":
+          description: Campaign is not awaiting review
+        "404":
+          description: Campaign not found
+  /campaigns/{id}/fork:
+    post:
+      operationId: forkCampaign
+      tags: [growth]
+      summary: Fork a campaign into a reusable draft
+      parameters:
+        - $ref: "#/components/parameters/CampaignId"
+      responses:
+        "201":
+          description: Forked campaign
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Campaign"
+        "404":
+          description: Campaign not found
+  /campaigns/{id}/activate:
+    post:
+      operationId: activateCampaign
+      tags: [growth]
+      summary: Mark an approved campaign live without external publishing
+      parameters:
+        - $ref: "#/components/parameters/CampaignId"
+      responses:
+        "200":
+          description: Campaign marked live internally
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Campaign"
+        "409":
+          description: Campaign must be approved first
+        "404":
+          description: Campaign not found
+  /campaigns/{id}/versions/{versionId}/restore:
+    post:
+      operationId: restoreCampaignVersion
+      tags: [growth]
+      summary: Restore a prior brief as a new draft revision
+      parameters:
+        - $ref: "#/components/parameters/CampaignId"
+        - in: path
+          name: versionId
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Restored campaign
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Campaign"
+        "404":
+          description: Campaign or revision not found
+components:
+  parameters:
+    CampaignId:
+      in: path
+      name: id
+      required: true
+      schema:
+        type: string
+        format: uuid
+  schemas:
+    BudgetAllocation:
+      type: object
+      required: [channel, amount]
+      properties:
+        channel: { type: string, enum: [Paid, Content, Social, Email, SEO, Brand] }
+        amount: { type: integer, minimum: 0, maximum: 1000000000 }
+    BudgetPlanInput:
+      type: object
+      required: [name, totalBudget, allocations]
+      properties:
+        name: { type: string, minLength: 1, maxLength: 100 }
+        totalBudget: { type: integer, minimum: 1, maximum: 1000000000 }
+        allocations:
+          type: array
+          minItems: 6
+          maxItems: 6
+          items: { $ref: "#/components/schemas/BudgetAllocation" }
+        note: { type: string, maxLength: 2000 }
+    BudgetPlan:
+      allOf:
+        - { $ref: "#/components/schemas/BudgetPlanInput" }
+        - type: object
+          required: [id, createdAt]
+          properties:
+            id: { type: string, format: uuid }
+            createdAt: { type: string, format: date-time }
+    ChannelPlanning:
+      type: object
+      required: [channel, campaigns, plannedBudget, share]
+      properties:
+        channel: { type: string }
+        campaigns: { type: integer }
+        plannedBudget: { type: integer }
+        share: { type: number, description: Fraction of planned budget, not performance efficiency }
+    StagePlanning:
+      type: object
+      required: [stage, campaigns, plannedBudget]
+      properties:
+        stage: { type: string }
+        campaigns: { type: integer }
+        plannedBudget: { type: integer }
+    WorkflowTrend:
+      type: object
+      required: [date, actions]
+      properties:
+        date: { type: string }
+        actions: { type: integer }
+    GrowthAnalytics:
+      type: object
+      required: [generatedAt, periodDays, currency, sourceStatus, sourceMessage, totalCampaigns, plannedBudget, reviewBudget, approvedBudget, liveBudget, unfundedCampaigns, byChannel, byStage, trend, actualSpend, conversions, costPerAcquisition, roas]
+      properties:
+        generatedAt: { type: string, format: date-time }
+        periodDays: { type: integer }
+        currency: { type: string, enum: [USD] }
+        sourceStatus: { type: string, enum: [not_connected] }
+        sourceMessage: { type: string }
+        totalCampaigns: { type: integer }
+        plannedBudget: { type: integer }
+        reviewBudget: { type: integer }
+        approvedBudget: { type: integer }
+        liveBudget: { type: integer }
+        unfundedCampaigns: { type: integer }
+        byChannel:
+          type: array
+          items: { $ref: "#/components/schemas/ChannelPlanning" }
+        byStage:
+          type: array
+          items: { $ref: "#/components/schemas/StagePlanning" }
+        trend:
+          type: array
+          items: { $ref: "#/components/schemas/WorkflowTrend" }
+        actualSpend: { type: ["number", "null"] }
+        conversions: { type: ["integer", "null"] }
+        costPerAcquisition: { type: ["number", "null"] }
+        roas: { type: ["number", "null"] }
+    HealthStatus:
+      type: object
+      properties:
+        status:
+          type: string
+      required: [status]
+    Campaign:
+      type: object
+      required: [id, name, description, channel, status, owner, budget, objective, audience, content, hypothesis, createdAt, updatedAt]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        description: { type: string }
+        channel: { type: string, enum: [Paid, Content, Social, Email, SEO, Brand] }
+        status: { type: string, enum: [idea, draft, in_review, approved, live] }
+        owner: { type: string }
+        budget: { type: integer, minimum: 0 }
+        objective: { type: string }
+        audience: { type: string }
+        content: { type: string }
+        hypothesis: { type: string }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    CampaignInput:
+      type: object
+      required: [name, channel, objective]
+      properties:
+        name: { type: string, minLength: 1 }
+        description: { type: string }
+        channel: { type: string, enum: [Paid, Content, Social, Email, SEO, Brand] }
+        owner: { type: string }
+        budget: { type: integer, minimum: 0 }
+        objective: { type: string, minLength: 1 }
+        audience: { type: string }
+        content: { type: string }
+        hypothesis: { type: string }
+    CampaignUpdate:
+      type: object
+      properties:
+        expectedUpdatedAt: { type: string, format: date-time }
+        name: { type: string, minLength: 1 }
+        description: { type: string }
+        channel: { type: string, enum: [Paid, Content, Social, Email, SEO, Brand] }
+        owner: { type: string }
+        budget: { type: integer, minimum: 0 }
+        objective: { type: string, minLength: 1 }
+        audience: { type: string }
+        content: { type: string }
+        hypothesis: { type: string }
+    CampaignVersion:
+      type: object
+      required: [id, campaignId, version, snapshot, summary, createdAt]
+      properties:
+        id: { type: string, format: uuid }
+        campaignId: { type: string, format: uuid }
+        version: { type: integer }
+        snapshot:
+          type: object
+          additionalProperties: true
+        summary: { type: string }
+        createdAt: { type: string, format: date-time }
+    ReviewInput:
+      type: object
+      required: [decision]
+      properties:
+        decision: { type: string, enum: [approve, request_changes] }
+        note: { type: string }
+    Activity:
+      type: object
+      required: [id, campaignId, campaignName, actor, action, createdAt]
+      properties:
+        id: { type: string, format: uuid }
+        campaignId: { type: string, format: uuid }
+        campaignName: { type: string }
+        actor: { type: string }
+        action: { type: string }
+        createdAt: { type: string, format: date-time }
+    Dashboard:
+      type: object
+      required: [total, inReview, live, approved, pipelineValue, campaigns]
+      properties:
+        total: { type: integer }
+        inReview: { type: integer }
+        live: { type: integer }
+        approved: { type: integer }
+        pipelineValue: { type: integer }
+        campaigns:
+          type: array
+          items:
+            $ref: "#/components/schemas/Campaign"
